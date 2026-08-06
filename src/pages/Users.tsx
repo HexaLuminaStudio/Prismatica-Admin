@@ -21,6 +21,7 @@ import {
   X,
   Edit2,
   Check,
+  Download,
 } from "lucide-react";
 import {
   AdminUserItem,
@@ -43,7 +44,7 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
-import { formatDate, cn } from "@/lib/utils";
+import { formatDate, cn, downloadCsv } from "@/lib/utils";
 import { userTierLabel, userStatusLabel } from "@/lib/labels";
 
 const TIERS = ["guest", "trial", "beta", "beta_pro", "paid"] as const;
@@ -72,6 +73,22 @@ export function UsersPage(): React.ReactElement {
   const [error, setError] = React.useState<string | null>(null);
   const [expanded, setExpanded] = React.useState<string | null>(null);
   const [detail, setDetail] = React.useState<Record<string, AdminUserDetail | "loading" | null>>({});
+  const [exporting, setExporting] = React.useState(false);
+
+  const onExport = async () => {
+    setExporting(true);
+    setError(null);
+    try {
+      await downloadCsv(
+        "/v1/admin/export/users.csv",
+        `users-${new Date().toISOString().slice(0, 10)}.csv`
+      );
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "导出失败");
+    } finally {
+      setExporting(false);
+    }
+  };
 
   const load = React.useCallback(
     async (opts: { reset?: boolean; cursor?: string; keyword?: string } = {}) => {
@@ -132,29 +149,44 @@ export function UsersPage(): React.ReactElement {
             </CardTitle>
             <CardDescription>列表 / 搜索 / 加余额 / 强制下线 / 改 tier</CardDescription>
           </div>
-          <form onSubmit={onSearch} className="flex w-72 items-center gap-2">
-            <div className="relative flex-1">
-              <Search className="absolute left-2 top-2.5 h-4 w-4 text-muted-foreground" />
-              <Input
-                value={q}
-                onChange={(e) => setQ(e.target.value)}
-                placeholder="搜索 displayName / userId"
-                className="pl-8"
-              />
-            </div>
-            <Button type="submit" variant="outline" size="sm" disabled={loading}>
-              <Search className="h-4 w-4" />
-            </Button>
+          <div className="flex items-center gap-2">
             <Button
-              type="button"
-              variant="ghost"
+              variant="outline"
               size="sm"
-              onClick={() => void load({ reset: true, keyword: q })}
-              disabled={loading}
+              onClick={() => void onExport()}
+              disabled={exporting || loading}
             >
-              <RefreshCcw className={cn("h-4 w-4", loading && "animate-spin")} />
+              {exporting ? (
+                <Loader2 className="mr-1 h-4 w-4 animate-spin" />
+              ) : (
+                <Download className="mr-1 h-4 w-4" />
+              )}
+              导出 CSV
             </Button>
-          </form>
+            <form onSubmit={onSearch} className="flex w-72 items-center gap-2">
+              <div className="relative flex-1">
+                <Search className="absolute left-2 top-2.5 h-4 w-4 text-muted-foreground" />
+                <Input
+                  value={q}
+                  onChange={(e) => setQ(e.target.value)}
+                  placeholder="搜索 displayName / userId"
+                  className="pl-8"
+                />
+              </div>
+              <Button type="submit" variant="outline" size="sm" disabled={loading}>
+                <Search className="h-4 w-4" />
+              </Button>
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                onClick={() => void load({ reset: true, keyword: q })}
+                disabled={loading}
+              >
+                <RefreshCcw className={cn("h-4 w-4", loading && "animate-spin")} />
+              </Button>
+            </form>
+          </div>
         </CardHeader>
         <CardContent>
           {error && (

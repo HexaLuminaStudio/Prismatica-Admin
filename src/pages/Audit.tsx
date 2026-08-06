@@ -15,6 +15,7 @@ import {
   AlertTriangle,
   ChevronDown,
   ChevronRight,
+  Download,
 } from "lucide-react";
 import {
   AdminAuditItem,
@@ -34,7 +35,7 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
-import { formatDate, cn } from "@/lib/utils";
+import { formatDate, cn, downloadCsv } from "@/lib/utils";
 
 export function AuditPage(): React.ReactElement {
   const [items, setItems] = React.useState<AdminAuditItem[]>([]);
@@ -45,6 +46,28 @@ export function AuditPage(): React.ReactElement {
   const [loading, setLoading] = React.useState(true);
   const [error, setError] = React.useState<string | null>(null);
   const [expanded, setExpanded] = React.useState<number | null>(null);
+  const [exporting, setExporting] = React.useState(false);
+
+  const onExport = async () => {
+    setExporting(true);
+    setError(null);
+    try {
+      const query = new URLSearchParams();
+      if (params.days) query.set("days", String(params.days));
+      if (params.action) query.set("action", params.action);
+      if (params.actor) query.set("actor", params.actor);
+      if (params.targetUser) query.set("targetUser", params.targetUser);
+      const qs = query.toString();
+      await downloadCsv(
+        `/v1/admin/export/audit.csv${qs ? `?${qs}` : ""}`,
+        `audit-${new Date().toISOString().slice(0, 10)}.csv`
+      );
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "导出失败");
+    } finally {
+      setExporting(false);
+    }
+  };
 
   const load = React.useCallback(
     async (opts: { reset?: boolean; cursor?: string; p?: ListAuditParams } = {}) => {
@@ -98,6 +121,19 @@ export function AuditPage(): React.ReactElement {
           <div className="flex items-center gap-2 text-xs">
             <span className="text-muted-foreground">近 {params.days ?? 7} 日总计:</span>
             <Badge variant="secondary">{summaryTotal.toLocaleString()}</Badge>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => void onExport()}
+              disabled={exporting || loading}
+            >
+              {exporting ? (
+                <Loader2 className="mr-1 h-4 w-4 animate-spin" />
+              ) : (
+                <Download className="mr-1 h-4 w-4" />
+              )}
+              导出 CSV
+            </Button>
             <Button
               size="sm"
               variant="ghost"

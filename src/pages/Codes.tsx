@@ -20,6 +20,7 @@ import {
   Check,
   Loader2,
   AlertTriangle,
+  Download,
 } from "lucide-react";
 import {
   CodeKind,
@@ -43,7 +44,7 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
-import { formatDate, cn, maskCodeTail } from "@/lib/utils";
+import { formatDate, cn, maskCodeTail, copyToClipboard, downloadCsv } from "@/lib/utils";
 import {
   kindLabel,
   kindDesc,
@@ -70,8 +71,28 @@ export function CodesPage(): React.ReactElement {
   const [filterStatus, setFilterStatus] = React.useState<"" | "active" | "consumed" | "revoked" | "expired">("");
   const [loading, setLoading] = React.useState(true);
   const [error, setError] = React.useState<string | null>(null);
+  const [exporting, setExporting] = React.useState(false);
   const [issueOpen, setIssueOpen] = React.useState(false);
   const [lookupOpen, setLookupOpen] = React.useState(false);
+
+  const onExport = async () => {
+    setExporting(true);
+    setError(null);
+    try {
+      const query = new URLSearchParams();
+      if (filterKind) query.set("kind", filterKind);
+      if (filterStatus) query.set("status", filterStatus);
+      const qs = query.toString();
+      await downloadCsv(
+        `/v1/admin/export/codes.csv${qs ? `?${qs}` : ""}`,
+        `codes-${new Date().toISOString().slice(0, 10)}.csv`
+      );
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "导出失败");
+    } finally {
+      setExporting(false);
+    }
+  };
   const [issuedBatch, setIssuedBatch] = React.useState<IssuedCodeItem[] | null>(null);
 
   const load = React.useCallback(
@@ -123,6 +144,19 @@ export function CodesPage(): React.ReactElement {
             <CardDescription>INV/TRY/RCH 码批量签发与查询</CardDescription>
           </div>
           <div className="flex items-center gap-2">
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => void onExport()}
+              disabled={exporting || loading}
+            >
+              {exporting ? (
+                <Loader2 className="mr-1 h-4 w-4 animate-spin" />
+              ) : (
+                <Download className="mr-1 h-4 w-4" />
+              )}
+              导出 CSV
+            </Button>
             <Button variant="outline" size="sm" onClick={() => setLookupOpen(true)}>
               <Search className="mr-1 h-4 w-4" />
               查码
@@ -458,12 +492,13 @@ function IssuedResultDialog({
 }): React.ReactElement {
   const [copied, setCopied] = React.useState<string | null>(null);
   const copy = async (code: string) => {
-    try {
-      await navigator.clipboard.writeText(code);
+    const ok = await copyToClipboard(code);
+    if (ok) {
       setCopied(code);
       setTimeout(() => setCopied(null), 1500);
-    } catch {
-      // ignore
+    } else {
+      // 复制失败:提示用户手动选中复制
+      window.alert("复制失败,请手动选中并复制");
     }
   };
 

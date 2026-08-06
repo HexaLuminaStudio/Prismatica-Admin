@@ -11,12 +11,15 @@ import {
   LayoutDashboard,
   Users,
   Ticket,
+  Receipt,
   ScrollText,
   UserCog,
   LogOut,
   ChevronRight,
+  KeyRound,
 } from "lucide-react";
 import { useSessionStore } from "@/store/session";
+import { ChangePasswordDialog } from "@/components/ChangePasswordDialog";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 
@@ -31,6 +34,7 @@ const NAV: NavItem[] = [
   { to: "/", label: "仪表盘", icon: LayoutDashboard },
   { to: "/users", label: "用户管理", icon: Users },
   { to: "/codes", label: "凭证签发", icon: Ticket },
+  { to: "/bills", label: "账单管理", icon: Receipt },
   { to: "/audit", label: "审计日志", icon: ScrollText },
   { to: "/admins", label: "账号管理", icon: UserCog, ownerOnly: true },
 ];
@@ -39,6 +43,7 @@ export function Layout(): React.ReactElement {
   const me = useSessionStore((s) => s.me);
   const logout = useSessionStore((s) => s.logout);
   const navigate = useNavigate();
+  const [pwdOpen, setPwdOpen] = React.useState(false);
 
   const onLogout = async () => {
     await logout();
@@ -108,6 +113,15 @@ export function Layout(): React.ReactElement {
                 <Button
                   variant="ghost"
                   size="sm"
+                  onClick={() => setPwdOpen(true)}
+                  className="text-muted-foreground hover:text-foreground"
+                >
+                  <KeyRound className="mr-1 h-4 w-4" />
+                  修改密码
+                </Button>
+                <Button
+                  variant="ghost"
+                  size="sm"
                   onClick={onLogout}
                   className="text-muted-foreground hover:text-destructive"
                 >
@@ -125,6 +139,10 @@ export function Layout(): React.ReactElement {
           <Outlet />
         </main>
       </div>
+
+      {pwdOpen && (
+        <ChangePasswordDialog onClose={() => setPwdOpen(false)} />
+      )}
     </div>
   );
 }

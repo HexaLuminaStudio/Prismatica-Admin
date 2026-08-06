@@ -48,7 +48,7 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
-import { formatDate, cn } from "@/lib/utils";
+import { formatDate, cn, copyToClipboard } from "@/lib/utils";
 
 const STATUS_BADGE: Record<AdminStatus, "default" | "destructive"> = {
   active: "default",
@@ -485,12 +485,12 @@ function ResetResultDialog({
 }): React.ReactElement {
   const [copied, setCopied] = React.useState(false);
   const copy = async () => {
-    try {
-      await navigator.clipboard.writeText(data.newPassword);
+    const ok = await copyToClipboard(data.newPassword);
+    if (ok) {
       setCopied(true);
       setTimeout(() => setCopied(false), 1500);
-    } catch {
-      // ignore
+    } else {
+      window.alert("复制失败,请手动选中并复制");
     }
   };
 

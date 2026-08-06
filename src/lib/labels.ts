@@ -71,6 +71,18 @@ export function userStatusLabel(status: string): string {
   return USER_STATUS_LABEL[status] ?? status;
 }
 
+/* ---------------- 账单状态 ---------------- */
+
+export const BILL_STATUS_LABEL: Record<string, string> = {
+  pending: "待结算",
+  settled: "已结算",
+  refunded: "已退款",
+};
+
+export function billStatusLabel(status: string): string {
+  return BILL_STATUS_LABEL[status] ?? status;
+}
+
 /* ---------------- 管理员角色 ---------------- */
 
 export const ADMIN_ROLE_LABEL: Record<string, string> = {
