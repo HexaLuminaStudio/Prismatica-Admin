@@ -12,6 +12,7 @@ import {
   Users,
   Ticket,
   ScrollText,
+  UserCog,
   LogOut,
   ChevronRight,
 } from "lucide-react";
@@ -19,15 +20,19 @@ import { useSessionStore } from "@/store/session";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 
-const NAV: Array<{
+interface NavItem {
   to: string;
   label: string;
   icon: React.ComponentType<{ className?: string }>;
-}> = [
+  ownerOnly?: boolean;
+}
+
+const NAV: NavItem[] = [
   { to: "/", label: "仪表盘", icon: LayoutDashboard },
   { to: "/users", label: "用户管理", icon: Users },
   { to: "/codes", label: "凭证签发", icon: Ticket },
   { to: "/audit", label: "审计日志", icon: ScrollText },
+  { to: "/admins", label: "账号管理", icon: UserCog, ownerOnly: true },
 ];
 
 export function Layout(): React.ReactElement {
@@ -51,7 +56,9 @@ export function Layout(): React.ReactElement {
           </span>
         </div>
         <nav className="flex-1 space-y-1 p-3">
-          {NAV.map(({ to, label, icon: Icon }) => (
+          {NAV.filter(
+            (item) => !item.ownerOnly || me?.role === "owner"
+          ).map(({ to, label, icon: Icon }) => (
             <NavLink
               key={to}
               to={to}

@@ -11,6 +11,7 @@ import { DashboardPage } from "@/pages/Dashboard";
 import { UsersPage } from "@/pages/Users";
 import { CodesPage } from "@/pages/Codes";
 import { AuditPage } from "@/pages/Audit";
+import { AdminsPage } from "@/pages/Admins";
 import { NotFoundPage } from "@/pages/NotFound";
 import { useSessionStore } from "@/store/session";
 
@@ -29,6 +30,15 @@ function ProtectedLayout(): React.ReactElement {
     );
   }
   return <Outlet />;
+}
+
+/** 仅 owner 可访问(2026-08-06 M3):非 owner 自动跳回 / */
+function OwnerOnly({ children }: { children: React.ReactElement }): React.ReactElement {
+  const me = useSessionStore((s) => s.me);
+  if (!me || me.role !== "owner") {
+    return <Navigate to="/" replace />;
+  }
+  return children;
 }
 
 /** 已登录就不该再看到 login → 直接跳 / */
@@ -59,6 +69,14 @@ const router = createBrowserRouter([
           { path: "users", element: <UsersPage /> },
           { path: "codes", element: <CodesPage /> },
           { path: "audit", element: <AuditPage /> },
+          {
+            path: "admins",
+            element: (
+              <OwnerOnly>
+                <AdminsPage />
+              </OwnerOnly>
+            ),
+          },
         ],
       },
     ],
