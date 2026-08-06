@@ -44,6 +44,7 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 import { formatDate, cn } from "@/lib/utils";
+import { userTierLabel, userStatusLabel } from "@/lib/labels";
 
 const TIERS = ["guest", "trial", "beta", "beta_pro", "paid"] as const;
 type Tier = (typeof TIERS)[number];
@@ -170,13 +171,13 @@ export function UsersPage(): React.ReactElement {
               <thead>
                 <tr className="border-b text-xs uppercase text-muted-foreground">
                   <th className="w-8 py-2 text-left"></th>
-                  <th className="py-2 text-left font-medium">userId</th>
-                  <th className="py-2 text-left font-medium">displayName</th>
-                  <th className="py-2 text-left font-medium">tier</th>
-                  <th className="py-2 text-left font-medium">status</th>
-                  <th className="py-2 text-right font-medium">balance</th>
-                  <th className="py-2 text-right font-medium">已充值</th>
-                  <th className="py-2 text-right font-medium">已消费</th>
+                  <th className="py-2 text-left font-medium">用户 ID</th>
+                  <th className="py-2 text-left font-medium">用户名</th>
+                  <th className="py-2 text-left font-medium">会员等级</th>
+                  <th className="py-2 text-left font-medium">状态</th>
+                  <th className="py-2 text-right font-medium">当前余额</th>
+                  <th className="py-2 text-right font-medium">累计充值</th>
+                  <th className="py-2 text-right font-medium">累计消费</th>
                 </tr>
               </thead>
               <tbody>
@@ -315,7 +316,7 @@ function UserDetailActions({
   const [busy, setBusy] = React.useState<"" | "grant" | "revoke" | "edit">("");
 
   const onRevoke = async () => {
-    if (!confirm(`确定撤销该用户(${userId.slice(0, 8)}…)的所有 refresh_token?`)) return;
+    if (!confirm(`确定要强制该用户(${userId.slice(0, 8)}…)下线吗?\n其所有登录会话将被撤销,需要重新登录。`)) return;
     setBusy("revoke");
     try {
       const r = await revokeUserSessions(userId, "admin 强制下线");
@@ -444,14 +445,14 @@ function GrantDialog({
     e.preventDefault();
     const a = Number(amount);
     if (!Number.isFinite(a) || a <= 0) {
-      setErr("amount 必须是 > 0 的整数");
+      setErr("金额必须是大于 0 的整数");
       return;
     }
     setBusy(true);
     setErr(null);
     try {
       const r = await grantBalance(userId, a, note);
-      onDone(`已加 ${a} 余额 → ${r.newBalance.toLocaleString()}`);
+      onDone(`已为用户充值 ${a} 余额,当前余额 ${r.newBalance.toLocaleString()}`);
     } catch (e) {
       setErr(e instanceof Error ? e.message : "操作失败");
     } finally {
@@ -460,10 +461,10 @@ function GrantDialog({
   };
 
   return (
-    <Modal title={`加余额(用户 ${userId.slice(0, 8)}…)`} onClose={onClose}>
+    <Modal title={`为用户 ${userId.slice(0, 8)}… 充值`} onClose={onClose}>
       <form onSubmit={onSubmit} className="space-y-3">
         <div className="space-y-1">
-          <Label htmlFor="amount">金额(amount)</Label>
+          <Label htmlFor="amount">充值金额</Label>
           <Input
             id="amount"
             type="number"
@@ -524,7 +525,7 @@ function EditTierDialog({
     setErr(null);
     try {
       await updateUser(userId, tier, status || undefined);
-      onDone(`已更新 tier=${tier}${status ? `, status=${status}` : ""}`);
+      onDone(`已更新会员等级为「${userTierLabel(tier)}」${status ? `, 状态为「${userStatusLabel(status)}」` : ""}`);
     } catch (e) {
       const msg = e instanceof Error ? e.message : "操作失败";
       if (e instanceof ApiClientError) {

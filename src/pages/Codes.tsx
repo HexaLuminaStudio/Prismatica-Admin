@@ -44,6 +44,11 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 import { formatDate, cn, maskCodeTail } from "@/lib/utils";
+import {
+  kindLabel,
+  kindDesc,
+  codeStatusLabel,
+} from "@/lib/labels";
 
 const KIND_LABELS: Record<CodeKind, string> = {
   invite: "邀请码(赠 balance+tier)",
@@ -130,7 +135,7 @@ export function CodesPage(): React.ReactElement {
         </CardHeader>
         <CardContent>
           <div className="mb-3 flex flex-wrap items-center gap-2 text-xs">
-            <span className="text-muted-foreground">kind:</span>
+            <span className="text-muted-foreground">凭证类型:</span>
             {(["", "invite", "trial", "recharge"] as const).map((k) => (
               <Button
                 key={k || "all"}
@@ -138,10 +143,10 @@ export function CodesPage(): React.ReactElement {
                 variant={filterKind === k ? "default" : "outline"}
                 onClick={() => setFilterKind(k as typeof filterKind)}
               >
-                {k || "全部"}
+                {k ? kindLabel(k) : "全部"}
               </Button>
             ))}
-            <span className="ml-4 text-muted-foreground">status:</span>
+            <span className="ml-4 text-muted-foreground">状态:</span>
             {(["", "active", "consumed", "revoked", "expired"] as const).map((s) => (
               <Button
                 key={s || "all-s"}
@@ -149,7 +154,7 @@ export function CodesPage(): React.ReactElement {
                 variant={filterStatus === s ? "default" : "outline"}
                 onClick={() => setFilterStatus(s as typeof filterStatus)}
               >
-                {s || "全部"}
+                {s ? codeStatusLabel(s) : "全部"}
               </Button>
             ))}
             <Button
@@ -305,7 +310,7 @@ function IssueDialog({
     try {
       const c = Number(count);
       if (!Number.isFinite(c) || c < 1 || c > 1000) {
-        throw new Error("count 必须在 1~1000 之间");
+        throw new Error("签发数量必须在 1~1000 之间");
       }
       const params = {
         kind,
@@ -322,7 +327,7 @@ function IssueDialog({
       const resp = await issueCodes(params);
       onDone(
         resp.items,
-        `成功签发 ${resp.items.length} 个 ${kind.toUpperCase()} 凭证`
+        `成功签发 ${resp.items.length} 个「${kindLabel(kind)}」`
       );
     } catch (e) {
       setErr(e instanceof Error ? e.message : "签发失败");
@@ -335,7 +340,7 @@ function IssueDialog({
     <Modal title="批量签发凭证" onClose={onClose}>
       <form onSubmit={onSubmit} className="space-y-3">
         <div className="space-y-1">
-          <Label>kind</Label>
+          <Label>凭证类型</Label>
           <div className="grid grid-cols-1 gap-2 md:grid-cols-3">
             {(["invite", "trial", "recharge"] as CodeKind[]).map((k) => (
               <Button
@@ -347,16 +352,16 @@ function IssueDialog({
                 disabled={busy}
               >
                 {kind === k ? <Check className="mr-1 h-3 w-3" /> : null}
-                {k.toUpperCase()}
+                {kindLabel(k)}
               </Button>
             ))}
           </div>
-          <p className="text-xs text-muted-foreground">{KIND_LABELS[kind]}</p>
+          <p className="text-xs text-muted-foreground">{kindDesc(kind)}</p>
         </div>
 
         <div className="grid grid-cols-2 gap-3">
           <div className="space-y-1">
-            <Label htmlFor="count">count</Label>
+            <Label htmlFor="count">签发数量</Label>
             <Input
               id="count"
               type="number"
@@ -368,7 +373,7 @@ function IssueDialog({
             />
           </div>
           <div className="space-y-1">
-            <Label htmlFor="expireDays">expireDays</Label>
+            <Label htmlFor="expireDays">有效期(天)</Label>
             <Input
               id="expireDays"
               type="number"
@@ -382,7 +387,7 @@ function IssueDialog({
 
         {isRecharge ? (
           <div className="space-y-1">
-            <Label htmlFor="amount">amount</Label>
+            <Label htmlFor="amount">充值金额</Label>
             <Input
               id="amount"
               type="number"
@@ -395,7 +400,7 @@ function IssueDialog({
         ) : (
           <div className="grid grid-cols-3 gap-3">
             <div className="space-y-1">
-              <Label htmlFor="balance">grantedBalance</Label>
+              <Label htmlFor="balance">赠送余额</Label>
               <Input
                 id="balance"
                 type="number"
@@ -406,7 +411,7 @@ function IssueDialog({
               />
             </div>
             <div className="space-y-1">
-              <Label htmlFor="days">grantedDays</Label>
+              <Label htmlFor="days">赠送天数</Label>
               <Input
                 id="days"
                 type="number"
@@ -417,7 +422,7 @@ function IssueDialog({
               />
             </div>
             <div className="space-y-1">
-              <Label htmlFor="tier">tier</Label>
+              <Label htmlFor="tier">会员等级</Label>
               <Input
                 id="tier"
                 value={tier}

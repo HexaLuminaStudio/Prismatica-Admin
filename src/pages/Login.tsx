@@ -175,7 +175,7 @@ export function LoginPage(): React.ReactElement {
             </Button>
 
             <p className="pt-2 text-center text-xs text-muted-foreground">
-              所有登录尝试均会写入审计日志。cookie 有效期由 ADMIN_COOKIE_MAX_AGE 控制。
+              所有登录尝试都会记录到审计日志中。登录状态默认保留 2 小时。
             </p>
           </form>
         </CardContent>

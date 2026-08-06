@@ -174,28 +174,28 @@ export function DashboardPage(): React.ReactElement {
         <KpiCard
           title="用户总数"
           value={state.metrics?.userCount ?? "—"}
-          description="user_accounts 总计"
+          description="平台用户总人数"
           icon={Users}
           accent="text-sky-500"
         />
         <KpiCard
           title="7 日活跃设备"
           value={state.metrics?.sevenDayActive ?? "—"}
-          description="user_devices.lastSeenAt ≥ now-7d"
+          description="过去 7 天有过活跃的设备数"
           icon={Activity}
           accent="text-emerald-500"
         />
         <KpiCard
-          title="7 日 grant 总额"
+          title="7 日充值总额"
           value={state.metrics?.sevenDayGrantTotal ?? "—"}
-          description="admin.grant_balance amount sum (近 7 日)"
+          description="过去 7 天累计充值余额"
           icon={Coins}
           accent="text-amber-500"
         />
         <KpiCard
           title="待结算账单"
           value={state.metrics?.billsPending ?? "—"}
-          description="bills.status = pending"
+          description="账单状态为待结算的数量"
           icon={Clock}
           accent="text-rose-500"
         />
@@ -229,7 +229,7 @@ export function DashboardPage(): React.ReactElement {
               </div>
             ) : state.summary.length === 0 ? (
               <div className="flex h-[280px] items-center justify-center text-sm text-muted-foreground">
-                近 7 日暂无 admin 行为记录
+                近 7 日暂无管理员操作记录
               </div>
             ) : (
               <div className="h-[280px]">

@@ -113,7 +113,7 @@ export function AuditPage(): React.ReactElement {
           <div className="mb-4 grid grid-cols-2 gap-3 md:grid-cols-5">
             <div className="space-y-1">
               <Label htmlFor="days" className="text-xs">
-                days
+                查询最近(天)
               </Label>
               <Input
                 id="days"
@@ -128,29 +128,29 @@ export function AuditPage(): React.ReactElement {
             </div>
             <div className="space-y-1">
               <Label htmlFor="action" className="text-xs">
-                action(模糊)
+                行为类型(模糊)
               </Label>
               <Input
                 id="action"
                 value={params.action ?? ""}
                 onChange={(e) => setParams((p) => ({ ...p, action: e.target.value }))}
-                placeholder="admin.grant_balance"
+                placeholder="如 admin.grant_balance"
               />
             </div>
             <div className="space-y-1">
               <Label htmlFor="actor" className="text-xs">
-                actor
+                操作员
               </Label>
               <Input
                 id="actor"
                 value={params.actor ?? ""}
                 onChange={(e) => setParams((p) => ({ ...p, actor: e.target.value }))}
-                placeholder="root"
+                placeholder="如 root"
               />
             </div>
             <div className="space-y-1">
               <Label htmlFor="target" className="text-xs">
-                targetUser
+                目标用户
               </Label>
               <Input
                 id="target"
@@ -247,7 +247,7 @@ export function AuditPage(): React.ReactElement {
                       <tr className="border-b bg-muted/30">
                         <td colSpan={6} className="p-3">
                           <div className="text-xs">
-                            <div className="mb-1 font-medium">details</div>
+                            <div className="mb-1 font-medium">详情</div>
                             <pre className="overflow-x-auto rounded-md border bg-card p-2 font-mono text-[11px]">
                               {r.details
                                 ? JSON.stringify(r.details, null, 2)

@@ -88,7 +88,7 @@ export function Layout(): React.ReactElement {
         <header className="flex h-14 items-center justify-between border-b bg-card px-6">
           <div className="flex items-center gap-2 text-sm">
             <Link to="/" className="text-muted-foreground hover:text-foreground">
-              Home
+              首页
             </Link>
             <ChevronRight className="h-3.5 w-3.5 text-muted-foreground" />
             <span className="text-foreground">管理后台</span>
