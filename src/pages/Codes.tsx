@@ -1,11 +1,14 @@
 /**
- * 凭证签发页(2026-08-06 实现)
+ * 凭证签发页(2026-08-06 P0-B M4 重构)
  *
  * 功能:
- *  - 批量签发 INV/TRY/RCH(弹窗:kind/count/参数)
- *  - 凭证列表(过滤 kind/status,分页)
- *  - 行:复制明文 code / 撤销
- *  - 单码查询(lookup):输入明文 code → 查 status
+ *  - 批量签发向导(kind / count / expireDays / note + 模板参数)
+ *  - 签发成功 → 明文码弹窗(可逐条复制 / 一键下载 TXT)
+ *  - 列表 + 筛选(kind / status)+ 分页 + 撤销
+ *  - 单码查询(lookup)
+ *  - CSV 导出(带筛选)
+ *
+ * 数据由 useCodesStore 提供。
  */
 
 import * as React from "react";
@@ -21,18 +24,14 @@ import {
   Loader2,
   AlertTriangle,
   Download,
+  FileText,
 } from "lucide-react";
 import {
   CodeKind,
   IssuedCodeItem,
-  CodeListItem,
-  issueCodes,
-  listCodes,
-  revokeCode,
-  lookupCode,
   CodeLookupResponse,
 } from "@/api/codes";
-import { ApiClientError } from "@/api/client";
+import { useCodesStore, DEFAULT_CODES_WIZARD, EMPTY_CODES_FILTERS, type CodesWizardDraft } from "@/store/codes";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -44,91 +43,100 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
-import { formatDate, cn, maskCodeTail, copyToClipboard, downloadCsv } from "@/lib/utils";
+import {
+  formatDate,
+  cn,
+  maskCodeTail,
+  copyToClipboard,
+  downloadCsv,
+  downloadTextFile,
+} from "@/lib/utils";
 import {
   kindLabel,
   kindDesc,
   codeStatusLabel,
 } from "@/lib/labels";
+import { classifyError } from "@/lib/errorMessages";
+import { toast } from "@/components/Toast";
 
-const KIND_LABELS: Record<CodeKind, string> = {
-  invite: "邀请码(赠 balance+tier)",
-  trial: "体验码(短周期 trial)",
-  recharge: "充值码(直接加 amount)",
-};
-
-const STATUS_BADGE: Record<string, "default" | "destructive" | "secondary" | "outline"> = {
+const STATUS_BADGE: Record<
+  string,
+  "default" | "destructive" | "secondary" | "outline"
+> = {
   active: "default",
   consumed: "secondary",
   revoked: "destructive",
   expired: "outline",
 };
 
+const KIND_OPTIONS = [
+  { value: "", label: "全部" },
+  { value: "invite", label: "邀请码" },
+  { value: "trial", label: "体验码" },
+  { value: "recharge", label: "充值码" },
+] as const;
+
+const STATUS_OPTIONS = [
+  { value: "", label: "全部" },
+  { value: "active", label: "有效" },
+  { value: "consumed", label: "已使用" },
+  { value: "revoked", label: "已撤销" },
+  { value: "expired", label: "已过期" },
+] as const;
+
 export function CodesPage(): React.ReactElement {
-  const [items, setItems] = React.useState<CodeListItem[]>([]);
-  const [nextCursor, setNextCursor] = React.useState<string | null>(null);
-  const [filterKind, setFilterKind] = React.useState<"" | CodeKind>("");
-  const [filterStatus, setFilterStatus] = React.useState<"" | "active" | "consumed" | "revoked" | "expired">("");
-  const [loading, setLoading] = React.useState(true);
-  const [error, setError] = React.useState<string | null>(null);
+  const items = useCodesStore((s) => s.items);
+  const nextCursor = useCodesStore((s) => s.nextCursor);
+  const filters = useCodesStore((s) => s.filters);
+  const setFilters = useCodesStore((s) => s.setFilters);
+  const loadList = useCodesStore((s) => s.loadList);
+  const loadMore = useCodesStore((s) => s.loadMore);
+  const revoke = useCodesStore((s) => s.revoke);
+  const listLoading = useCodesStore((s) => s.listLoading);
+  const listError = useCodesStore((s) => s.listError);
+  const lastIssuedBatch = useCodesStore((s) => s.lastIssuedBatch);
+  const clearIssuedBatch = useCodesStore((s) => s.clearIssuedBatch);
+
   const [exporting, setExporting] = React.useState(false);
   const [issueOpen, setIssueOpen] = React.useState(false);
   const [lookupOpen, setLookupOpen] = React.useState(false);
 
+  React.useEffect(() => {
+    void loadList({ reset: true }).catch(() => {});
+  }, [loadList]);
+
   const onExport = async () => {
     setExporting(true);
-    setError(null);
     try {
-      const query = new URLSearchParams();
-      if (filterKind) query.set("kind", filterKind);
-      if (filterStatus) query.set("status", filterStatus);
-      const qs = query.toString();
+      const q = new URLSearchParams();
+      if (filters.kind) q.set("kind", filters.kind);
+      if (filters.status) q.set("status", filters.status);
+      const qs = q.toString();
       await downloadCsv(
         `/v1/admin/export/codes.csv${qs ? `?${qs}` : ""}`,
         `codes-${new Date().toISOString().slice(0, 10)}.csv`
       );
+      toast({ kind: "success", title: "导出已开始" });
     } catch (e) {
-      setError(e instanceof Error ? e.message : "导出失败");
+      const msg = classifyError(e);
+      toast({ kind: "error", title: "导出失败", description: msg.description });
     } finally {
       setExporting(false);
     }
   };
-  const [issuedBatch, setIssuedBatch] = React.useState<IssuedCodeItem[] | null>(null);
-
-  const load = React.useCallback(
-    async (opts: { reset?: boolean; cursor?: string } = {}) => {
-      setLoading(true);
-      setError(null);
-      try {
-        const resp = await listCodes({
-          limit: 50,
-          ...(filterKind ? { kind: filterKind } : {}),
-          ...(filterStatus ? { status: filterStatus } : {}),
-          ...(opts.cursor ? { cursor: opts.cursor } : {}),
-        });
-        setItems((prev) => (opts.reset ? resp.items : [...prev, ...resp.items]));
-        setNextCursor(resp.nextCursor);
-      } catch (e) {
-        setError(e instanceof Error ? e.message : "加载失败");
-      } finally {
-        setLoading(false);
-      }
-    },
-    [filterKind, filterStatus]
-  );
-
-  React.useEffect(() => {
-    void load({ reset: true });
-  }, [load]);
 
   const onRevoke = async (codeHash: string) => {
-    if (!confirm(`确定撤销凭证 ${codeHash.slice(0, 12)}…?`)) return;
+    if (!window.confirm(`确定撤销凭证 ${codeHash.slice(0, 12)}…?`)) return;
     try {
-      const r = await revokeCode(codeHash);
-      setError(`已撤销 ${r.codeHash.slice(0, 8)}…(status=${r.status})`);
-      void load({ reset: true });
+      const r = await revoke(codeHash);
+      toast({
+        kind: "success",
+        title: "凭证已撤销",
+        description: `status=${r.status}`,
+      });
     } catch (e) {
-      setError(e instanceof Error ? e.message : "撤销失败");
+      const msg = classifyError(e);
+      toast({ kind: "error", title: msg.title, description: msg.description });
     }
   };
 
@@ -141,14 +149,16 @@ export function CodesPage(): React.ReactElement {
               <Ticket className="h-4 w-4" />
               凭证签发
             </CardTitle>
-            <CardDescription>INV/TRY/RCH 码批量签发与查询</CardDescription>
+            <CardDescription>
+              INV / TRY / RCH 批量签发与查询
+            </CardDescription>
           </div>
           <div className="flex items-center gap-2">
             <Button
               variant="outline"
               size="sm"
               onClick={() => void onExport()}
-              disabled={exporting || loading}
+              disabled={exporting || listLoading}
             >
               {exporting ? (
                 <Loader2 className="mr-1 h-4 w-4 animate-spin" />
@@ -157,55 +167,75 @@ export function CodesPage(): React.ReactElement {
               )}
               导出 CSV
             </Button>
-            <Button variant="outline" size="sm" onClick={() => setLookupOpen(true)}>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => setLookupOpen(true)}
+            >
               <Search className="mr-1 h-4 w-4" />
               查码
             </Button>
             <Button size="sm" onClick={() => setIssueOpen(true)}>
               <Plus className="mr-1 h-4 w-4" />
-              签发
+              批量签发
             </Button>
           </div>
         </CardHeader>
         <CardContent>
+          {/* 筛选条 */}
           <div className="mb-3 flex flex-wrap items-center gap-2 text-xs">
-            <span className="text-muted-foreground">凭证类型:</span>
-            {(["", "invite", "trial", "recharge"] as const).map((k) => (
+            <span className="text-muted-foreground">类型:</span>
+            {KIND_OPTIONS.map((o) => (
               <Button
-                key={k || "all"}
+                key={o.value || "all"}
                 size="sm"
-                variant={filterKind === k ? "default" : "outline"}
-                onClick={() => setFilterKind(k as typeof filterKind)}
+                variant={filters.kind === o.value ? "default" : "outline"}
+                onClick={() =>
+                  setFilters({ kind: o.value as "" | CodeKind })
+                }
+                className="h-7"
               >
-                {k ? kindLabel(k) : "全部"}
+                {o.label}
               </Button>
             ))}
             <span className="ml-4 text-muted-foreground">状态:</span>
-            {(["", "active", "consumed", "revoked", "expired"] as const).map((s) => (
+            {STATUS_OPTIONS.map((o) => (
               <Button
-                key={s || "all-s"}
+                key={o.value || "all-s"}
                 size="sm"
-                variant={filterStatus === s ? "default" : "outline"}
-                onClick={() => setFilterStatus(s as typeof filterStatus)}
+                variant={filters.status === o.value ? "default" : "outline"}
+                onClick={() =>
+                  setFilters({
+                    status: o.value as
+                      | ""
+                      | "active"
+                      | "consumed"
+                      | "revoked"
+                      | "expired",
+                  })
+                }
+                className="h-7"
               >
-                {s ? codeStatusLabel(s) : "全部"}
+                {o.label}
               </Button>
             ))}
             <Button
               variant="ghost"
               size="sm"
-              onClick={() => void load({ reset: true })}
-              disabled={loading}
+              onClick={() => void loadList({ reset: true })}
+              disabled={listLoading}
               className="ml-2"
             >
-              <RefreshCcw className={cn("h-4 w-4", loading && "animate-spin")} />
+              <RefreshCcw
+                className={cn("h-4 w-4", listLoading && "animate-spin")}
+              />
             </Button>
           </div>
 
-          {error && (
-            <div className="mb-3 flex items-start gap-2 rounded-md border border-destructive/40 bg-destructive/5 p-3 text-sm text-destructive">
+          {listError && (
+            <div className="mb-3 flex items-start gap-2 rounded-md border border-destructive/40 bg-destructive/10 p-3 text-sm text-destructive">
               <AlertTriangle className="mt-0.5 h-4 w-4" />
-              <div>{error}</div>
+              <div>{listError}</div>
             </div>
           )}
 
@@ -224,21 +254,28 @@ export function CodesPage(): React.ReactElement {
                 </tr>
               </thead>
               <tbody>
-                {items.length === 0 && !loading && (
+                {items.length === 0 && !listLoading && (
                   <tr>
-                    <td colSpan={8} className="py-12 text-center text-muted-foreground">
+                    <td
+                      colSpan={8}
+                      className="py-12 text-center text-muted-foreground"
+                    >
                       暂无凭证
                     </td>
                   </tr>
                 )}
                 {items.map((c) => (
                   <tr key={c.codeHash} className="border-b">
-                    <td className="py-2 font-mono text-xs">{c.codeHash.slice(0, 12)}…</td>
-                    <td className="py-2">
-                      <Badge variant="outline">{c.codeKind}</Badge>
+                    <td className="py-2 font-mono text-xs">
+                      {maskCodeTail(c.codeHash, 10, 4)}
                     </td>
                     <td className="py-2">
-                      <Badge variant={STATUS_BADGE[c.status] ?? "outline"}>{c.status}</Badge>
+                      <Badge variant="outline">{kindLabel(c.codeKind)}</Badge>
+                    </td>
+                    <td className="py-2">
+                      <Badge variant={STATUS_BADGE[c.status] ?? "outline"}>
+                        {codeStatusLabel(c.status)}
+                      </Badge>
                     </td>
                     <td className="py-2 text-xs">
                       {c.codeKind === "recharge"
@@ -252,7 +289,7 @@ export function CodesPage(): React.ReactElement {
                         <span>
                           {formatDate(c.consumedAt)} by{" "}
                           <span className="font-mono">
-                            {c.consumedByUserId?.slice(0, 8) ?? "?"}…
+                            {maskCodeTail(c.consumedByUserId ?? "?", 8, 4)}
                           </span>
                         </span>
                       ) : (
@@ -281,10 +318,12 @@ export function CodesPage(): React.ReactElement {
               <Button
                 variant="outline"
                 size="sm"
-                disabled={loading}
-                onClick={() => void load({ cursor: nextCursor })}
+                disabled={listLoading}
+                onClick={() => void loadMore()}
               >
-                {loading ? <Loader2 className="mr-1 h-4 w-4 animate-spin" /> : null}
+                {listLoading ? (
+                  <Loader2 className="mr-1 h-4 w-4 animate-spin" />
+                ) : null}
                 加载更多
               </Button>
             </div>
@@ -293,21 +332,13 @@ export function CodesPage(): React.ReactElement {
       </Card>
 
       {issueOpen && (
-        <IssueDialog
-          onClose={() => setIssueOpen(false)}
-          onDone={async (items, msg) => {
-            setIssuedBatch(items);
-            setIssueOpen(false);
-            setError(msg);
-            await load({ reset: true });
-          }}
-        />
+        <IssueDialog onClose={() => setIssueOpen(false)} />
       )}
 
-      {issuedBatch && (
+      {lastIssuedBatch && (
         <IssuedResultDialog
-          items={issuedBatch}
-          onClose={() => setIssuedBatch(null)}
+          items={lastIssuedBatch}
+          onClose={() => clearIssuedBatch()}
         />
       )}
 
@@ -318,53 +349,80 @@ export function CodesPage(): React.ReactElement {
   );
 }
 
-function IssueDialog({
-  onClose,
-  onDone,
-}: {
-  onClose: () => void;
-  onDone: (items: IssuedCodeItem[], msg: string) => void;
-}): React.ReactElement {
-  const [kind, setKind] = React.useState<CodeKind>("invite");
-  const [count, setCount] = React.useState("5");
-  const [grantedBalance, setGrantedBalance] = React.useState("100");
-  const [grantedDays, setGrantedDays] = React.useState("30");
-  const [tier, setTier] = React.useState("beta");
-  const [amount, setAmount] = React.useState("50");
-  const [expireDays, setExpireDays] = React.useState("14");
+/* ===================== 向导 ===================== */
+
+function IssueDialog({ onClose }: { onClose: () => void }): React.ReactElement {
+  const issue = useCodesStore((s) => s.issue);
+  const [draft, setDraft] = React.useState<CodesWizardDraft>({
+    ...DEFAULT_CODES_WIZARD,
+  });
   const [busy, setBusy] = React.useState(false);
   const [err, setErr] = React.useState<string | null>(null);
 
-  const isRecharge = kind === "recharge";
+  const isRecharge = draft.kind === "recharge";
+
+  const set = <K extends keyof CodesWizardDraft>(
+    key: K,
+    value: CodesWizardDraft[K]
+  ) => {
+    setDraft((d) => ({ ...d, [key]: value }));
+  };
 
   const onSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    setBusy(true);
     setErr(null);
-    try {
-      const c = Number(count);
-      if (!Number.isFinite(c) || c < 1 || c > 1000) {
-        throw new Error("签发数量必须在 1~1000 之间");
+    const c = draft.count;
+    if (!Number.isInteger(c) || c < 1 || c > 1000) {
+      setErr("签发数量必须是 1~1000 之间的整数");
+      return;
+    }
+    if (!Number.isInteger(draft.expireDays) || draft.expireDays < 1) {
+      setErr("有效期必须 ≥ 1 天");
+      return;
+    }
+    if (isRecharge) {
+      if (
+        !Number.isInteger(draft.amount) ||
+        draft.amount < 1 ||
+        draft.amount > 100000
+      ) {
+        setErr("充值金额必须是 1~100000 之间的整数");
+        return;
       }
-      const params = {
-        kind,
-        count: c,
-        ...(isRecharge
-          ? { amount: Number(amount) }
-          : {
-              grantedBalance: Number(grantedBalance),
-              grantedDays: Number(grantedDays),
-              tier,
-            }),
-        expireDays: Number(expireDays),
-      };
-      const resp = await issueCodes(params);
-      onDone(
-        resp.items,
-        `成功签发 ${resp.items.length} 个「${kindLabel(kind)}」`
-      );
-    } catch (e) {
-      setErr(e instanceof Error ? e.message : "签发失败");
+    } else {
+      if (
+        !Number.isInteger(draft.grantedBalance) ||
+        draft.grantedBalance < 0
+      ) {
+        setErr("赠送余额必须是非负整数");
+        return;
+      }
+      if (
+        !Number.isInteger(draft.grantedDays) ||
+        draft.grantedDays < 1
+      ) {
+        setErr("赠送天数必须是 ≥ 1 的整数");
+        return;
+      }
+      if (!draft.tier.trim()) {
+        setErr("会员等级不能为空");
+        return;
+      }
+    }
+
+    setBusy(true);
+    try {
+      const items = await issue(draft);
+      toast({
+        kind: "success",
+        title: "签发成功",
+        description: `共 ${items.length} 个「${kindLabel(draft.kind)}」`,
+      });
+      onClose();
+    } catch (e2) {
+      const msg = classifyError(e2);
+      setErr(msg.description);
+      toast({ kind: "error", title: msg.title, description: msg.description });
     } finally {
       setBusy(false);
     }
@@ -381,16 +439,16 @@ function IssueDialog({
                 key={k}
                 type="button"
                 size="sm"
-                variant={kind === k ? "default" : "outline"}
-                onClick={() => setKind(k)}
+                variant={draft.kind === k ? "default" : "outline"}
+                onClick={() => set("kind", k)}
                 disabled={busy}
               >
-                {kind === k ? <Check className="mr-1 h-3 w-3" /> : null}
+                {draft.kind === k ? <Check className="mr-1 h-3 w-3" /> : null}
                 {kindLabel(k)}
               </Button>
             ))}
           </div>
-          <p className="text-xs text-muted-foreground">{kindDesc(kind)}</p>
+          <p className="text-xs text-muted-foreground">{kindDesc(draft.kind)}</p>
         </div>
 
         <div className="grid grid-cols-2 gap-3">
@@ -401,8 +459,8 @@ function IssueDialog({
               type="number"
               min={1}
               max={1000}
-              value={count}
-              onChange={(e) => setCount(e.target.value)}
+              value={String(draft.count)}
+              onChange={(e) => set("count", Number(e.target.value))}
               disabled={busy}
             />
           </div>
@@ -412,8 +470,8 @@ function IssueDialog({
               id="expireDays"
               type="number"
               min={1}
-              value={expireDays}
-              onChange={(e) => setExpireDays(e.target.value)}
+              value={String(draft.expireDays)}
+              onChange={(e) => set("expireDays", Number(e.target.value))}
               disabled={busy}
             />
           </div>
@@ -426,8 +484,8 @@ function IssueDialog({
               id="amount"
               type="number"
               min={1}
-              value={amount}
-              onChange={(e) => setAmount(e.target.value)}
+              value={String(draft.amount)}
+              onChange={(e) => set("amount", Number(e.target.value))}
               disabled={busy}
             />
           </div>
@@ -439,8 +497,10 @@ function IssueDialog({
                 id="balance"
                 type="number"
                 min={0}
-                value={grantedBalance}
-                onChange={(e) => setGrantedBalance(e.target.value)}
+                value={String(draft.grantedBalance)}
+                onChange={(e) =>
+                  set("grantedBalance", Number(e.target.value))
+                }
                 disabled={busy}
               />
             </div>
@@ -450,8 +510,8 @@ function IssueDialog({
                 id="days"
                 type="number"
                 min={1}
-                value={grantedDays}
-                onChange={(e) => setGrantedDays(e.target.value)}
+                value={String(draft.grantedDays)}
+                onChange={(e) => set("grantedDays", Number(e.target.value))}
                 disabled={busy}
               />
             </div>
@@ -459,18 +519,35 @@ function IssueDialog({
               <Label htmlFor="tier">会员等级</Label>
               <Input
                 id="tier"
-                value={tier}
-                onChange={(e) => setTier(e.target.value)}
+                value={draft.tier}
+                onChange={(e) => set("tier", e.target.value)}
                 disabled={busy}
               />
             </div>
           </div>
         )}
 
+        <div className="space-y-1">
+          <Label htmlFor="note">备注(可选)</Label>
+          <Input
+            id="note"
+            value={draft.note}
+            onChange={(e) => set("note", e.target.value)}
+            disabled={busy}
+            placeholder="如:运营活动 2026Q3"
+            maxLength={200}
+          />
+        </div>
+
         {err && <div className="text-sm text-destructive">{err}</div>}
 
         <div className="flex justify-end gap-2 pt-2">
-          <Button type="button" variant="ghost" onClick={onClose} disabled={busy}>
+          <Button
+            type="button"
+            variant="ghost"
+            onClick={onClose}
+            disabled={busy}
+          >
             取消
           </Button>
           <Button type="submit" disabled={busy}>
@@ -483,6 +560,8 @@ function IssueDialog({
   );
 }
 
+/* ===================== 签发结果(明文一次性展示) ===================== */
+
 function IssuedResultDialog({
   items,
   onClose,
@@ -490,22 +569,47 @@ function IssuedResultDialog({
   items: IssuedCodeItem[];
   onClose: () => void;
 }): React.ReactElement {
-  const [copied, setCopied] = React.useState<string | null>(null);
-  const copy = async (code: string) => {
+  const [copiedKey, setCopiedKey] = React.useState<string | null>(null);
+  const copy = async (code: string, key: string) => {
     const ok = await copyToClipboard(code);
     if (ok) {
-      setCopied(code);
-      setTimeout(() => setCopied(null), 1500);
+      setCopiedKey(key);
+      window.setTimeout(() => setCopiedKey(null), 1500);
+      toast({ kind: "success", title: "已复制到剪贴板" });
     } else {
-      // 复制失败:提示用户手动选中复制
-      window.alert("复制失败,请手动选中并复制");
+      toast({ kind: "error", title: "复制失败", description: "请手动选中并复制" });
     }
   };
 
+  const onDownloadTxt = () => {
+    const lines = items.map((it) => it.code).join("\n");
+    downloadTextFile(lines + "\n", `codes-${new Date().toISOString().slice(0, 10)}.txt`);
+    toast({ kind: "success", title: "TXT 文件已下载" });
+  };
+
+  const onCopyAll = async () => {
+    const lines = items.map((it) => it.code).join("\n");
+    await copy(lines, "__all__");
+  };
+
   return (
-    <Modal title={`签发成功(${items.length} 个)`} onClose={onClose}>
-      <div className="mb-3 text-xs text-muted-foreground">
-        明文 code 仅在此窗口显示一次,请立即复制保存。
+    <Modal
+      title={`签发成功(${items.length} 个 · 请立即保存)`}
+      onClose={onClose}
+      maxWidthClass="max-w-xl"
+    >
+      <div className="mb-3 rounded-md border border-amber-500/40 bg-amber-500/10 p-2 text-xs text-amber-700 dark:text-amber-300">
+        明文 code 仅在此窗口显示一次,关闭后无法再次查看,请立刻复制或下载 TXT。
+      </div>
+      <div className="mb-3 flex justify-end gap-2">
+        <Button size="sm" variant="outline" onClick={() => void onCopyAll()}>
+          <Copy className="mr-1 h-3 w-3" />
+          复制全部
+        </Button>
+        <Button size="sm" onClick={onDownloadTxt}>
+          <FileText className="mr-1 h-3 w-3" />
+          下载 TXT
+        </Button>
       </div>
       <div className="max-h-80 space-y-1 overflow-y-auto">
         {items.map((it) => (
@@ -518,9 +622,9 @@ function IssuedResultDialog({
               type="button"
               size="sm"
               variant="ghost"
-              onClick={() => void copy(it.code)}
+              onClick={() => void copy(it.code, it.codeHash)}
             >
-              {copied === it.code ? (
+              {copiedKey === it.codeHash ? (
                 <Check className="h-3 w-3 text-emerald-500" />
               ) : (
                 <Copy className="h-3 w-3" />
@@ -536,7 +640,10 @@ function IssuedResultDialog({
   );
 }
 
+/* ===================== 单码查询 ===================== */
+
 function LookupDialog({ onClose }: { onClose: () => void }): React.ReactElement {
+  const lookup = useCodesStore((s) => s.lookup);
   const [code, setCode] = React.useState("");
   const [busy, setBusy] = React.useState(false);
   const [result, setResult] = React.useState<CodeLookupResponse | null>(null);
@@ -544,7 +651,8 @@ function LookupDialog({ onClose }: { onClose: () => void }): React.ReactElement 
 
   const onSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!code.trim()) {
+    const trimmed = code.trim();
+    if (!trimmed) {
       setErr("请输入 code");
       return;
     }
@@ -552,17 +660,18 @@ function LookupDialog({ onClose }: { onClose: () => void }): React.ReactElement 
     setErr(null);
     setResult(null);
     try {
-      const r = await lookupCode(code.trim());
+      const r = await lookup(trimmed);
       setResult(r);
-    } catch (e) {
-      setErr(e instanceof Error ? e.message : "查询失败");
+    } catch (e2) {
+      const msg = classifyError(e2);
+      setErr(msg.description);
     } finally {
       setBusy(false);
     }
   };
 
   return (
-    <Modal title="查码" onClose={onClose}>
+    <Modal title="单码查询" onClose={onClose}>
       <form onSubmit={onSubmit} className="space-y-3">
         <div className="space-y-1">
           <Label htmlFor="lookup">明文 code</Label>
@@ -583,12 +692,12 @@ function LookupDialog({ onClose }: { onClose: () => void }): React.ReactElement 
             </div>
             <div>
               <span className="text-muted-foreground">codeKind: </span>
-              <Badge variant="outline">{result.codeKind}</Badge>
+              <Badge variant="outline">{kindLabel(result.codeKind)}</Badge>
             </div>
             <div>
               <span className="text-muted-foreground">status: </span>
               <Badge variant={STATUS_BADGE[result.status] ?? "outline"}>
-                {result.status}
+                {codeStatusLabel(result.status)}
               </Badge>
             </div>
             {result.consumedAt && (
@@ -601,7 +710,7 @@ function LookupDialog({ onClose }: { onClose: () => void }): React.ReactElement 
               <div>
                 <span className="text-muted-foreground">consumedBy: </span>
                 <span className="font-mono">
-                  {maskCodeTail(result.consumedByUserId, 6, 4)}
+                  {maskCodeTail(result.consumedByUserId, 8, 4)}
                 </span>
               </div>
             )}
@@ -627,18 +736,27 @@ function LookupDialog({ onClose }: { onClose: () => void }): React.ReactElement 
   );
 }
 
+/* ===================== 通用 Modal ===================== */
+
 function Modal({
   title,
   onClose,
   children,
+  maxWidthClass = "max-w-xl",
 }: {
   title: string;
   onClose: () => void;
   children: React.ReactNode;
+  maxWidthClass?: string;
 }): React.ReactElement {
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
-      <div className="w-full max-w-xl rounded-lg border bg-card p-5 shadow-xl">
+      <div
+        className={cn(
+          "w-full rounded-lg border bg-card p-5 shadow-xl",
+          maxWidthClass
+        )}
+      >
         <div className="mb-3 flex items-center justify-between">
           <div className="text-sm font-semibold">{title}</div>
           <Button type="button" size="icon" variant="ghost" onClick={onClose}>

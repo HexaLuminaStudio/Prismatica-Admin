@@ -10,6 +10,8 @@ export interface IssueCodesParams {
   tier?: string;
   amount?: number;
   expireDays?: number;
+  /** 备注(可选) */
+  note?: string;
 }
 
 export interface IssuedCodeItem {
@@ -34,17 +36,19 @@ export interface IssueCodesResponse {
 export async function issueCodes(
   params: IssueCodesParams
 ): Promise<IssueCodesResponse> {
+  const json: Record<string, unknown> = {
+    kind: params.kind,
+    count: params.count,
+    grantedBalance: params.grantedBalance ?? 100,
+    grantedDays: params.grantedDays ?? 30,
+    tier: params.tier ?? "beta",
+    amount: params.amount ?? 0,
+    expireDays: params.expireDays ?? 14,
+  };
+  if (params.note) json.note = params.note;
   return apiRequest<IssueCodesResponse>("/v1/admin/codes", {
     method: "POST",
-    json: {
-      kind: params.kind,
-      count: params.count,
-      grantedBalance: params.grantedBalance ?? 100,
-      grantedDays: params.grantedDays ?? 30,
-      tier: params.tier ?? "beta",
-      amount: params.amount ?? 0,
-      expireDays: params.expireDays ?? 14,
-    },
+    json,
   });
 }
 

@@ -20,6 +20,7 @@ import {
 } from "lucide-react";
 import { useSessionStore } from "@/store/session";
 import { ChangePasswordDialog } from "@/components/ChangePasswordDialog";
+import { ToastContainer } from "@/components/Toast";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 
@@ -143,6 +144,8 @@ export function Layout(): React.ReactElement {
       {pwdOpen && (
         <ChangePasswordDialog onClose={() => setPwdOpen(false)} />
       )}
+
+      <ToastContainer />
     </div>
   );
 }

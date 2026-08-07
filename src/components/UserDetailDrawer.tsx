@@ -1,0 +1,853 @@
+/**
+ * UserDetailDrawer(2026-08-06 P0-B M3)
+ *
+ * 抽屉式用户详情:
+ *  - 5 个 tab:基本信息 / 订阅 / 余额(账本) / 设备 / 账单
+ *  - 抽屉内操作:强制下线 / 改 tier / 改 status / 手动赠送 / 撤销设备
+ *  - 写操作走 toast 反馈 + 后端 audit_log
+ *
+ * 数据由 useUsersStore 提供;不直接调 API。
+ */
+
+import * as React from "react";
+import {
+  X,
+  Loader2,
+  AlertTriangle,
+  Coins,
+  KeyRound,
+  Power,
+  Smartphone,
+  Receipt,
+  RefreshCcw,
+  ChevronRight,
+} from "lucide-react";
+import { useUsersStore, type DetailTab } from "@/store/users";
+import {
+  AdminUserDetail,
+  AdminUserSubscription,
+  AdminUserDevice,
+  AdminUserLedgerItem,
+} from "@/api/users";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Badge } from "@/components/ui/badge";
+import { formatDate, cn } from "@/lib/utils";
+import { userTierLabel, userStatusLabel } from "@/lib/labels";
+import { classifyError } from "@/lib/errorMessages";
+import { toast } from "@/components/Toast";
+
+const TIERS = ["guest", "trial", "beta", "beta_pro", "paid"] as const;
+const STATUSES = ["active", "suspended", "expired"] as const;
+type Tier = (typeof TIERS)[number];
+type Status = (typeof STATUSES)[number];
+
+const TAB_LABELS: Record<DetailTab, string> = {
+  info: "基本信息",
+  subscription: "订阅",
+  balance: "余额",
+  devices: "设备",
+  bills: "账本",
+};
+
+interface Props {
+  userId: string | null;
+  onClose: () => void;
+}
+
+export function UserDetailDrawer({ userId, onClose }: Props): React.ReactElement | null {
+  const ensureDetail = useUsersStore((s) => s.ensureDetail);
+  const refreshDetail = useUsersStore((s) => s.refreshDetail);
+  const loadTab = useUsersStore((s) => s.loadTab);
+  const cache = useUsersStore((s) =>
+    userId ? s.detailCache[userId] : null
+  );
+
+  const [tab, setTab] = React.useState<DetailTab>("info");
+
+  // 抽屉打开 / 切换 userId 时拉详情
+  React.useEffect(() => {
+    if (!userId) return;
+    let cancelled = false;
+    setTab("info");
+    void (async () => {
+      try {
+        await ensureDetail(userId);
+        if (!cancelled) {
+          // 默认拉订阅 tab 数据(成本最低)
+          void loadTab(userId, "subscription");
+        }
+      } catch (e) {
+        const msg = classifyError(e);
+        toast({ kind: "error", title: msg.title, description: msg.description });
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [userId, ensureDetail, loadTab]);
+
+  // 切换 tab 时按需加载
+  const onTabClick = (next: DetailTab) => {
+    setTab(next);
+  };
+
+  React.useEffect(() => {
+    if (userId && tab !== "info") {
+      // "balance" tab 展示余额摘要 + 账本,复用 bills(ledger) 数据加载
+      const loadKey = tab === "balance" ? "bills" : tab;
+      void loadTab(userId, loadKey);
+    }
+  }, [userId, tab, loadTab]);
+
+  if (!userId) return null;
+  const isLoading = !cache || cache === "loading";
+  const detail: AdminUserDetail | null =
+    cache && cache !== "loading" ? cache.detail : null;
+
+  return (
+    <div
+      className="fixed inset-0 z-50 flex justify-end bg-black/40"
+      role="dialog"
+      aria-modal="true"
+      onClick={onClose}
+    >
+      <div
+        className="flex h-full w-full max-w-[640px] flex-col border-l bg-card shadow-2xl"
+        onClick={(e) => e.stopPropagation()}
+      >
+        {/* header */}
+        <div className="flex items-center justify-between border-b px-5 py-3">
+          <div>
+            <div className="text-sm font-semibold">用户详情</div>
+            <div className="text-xs text-muted-foreground font-mono">{userId}</div>
+          </div>
+          <Button variant="ghost" size="icon" onClick={onClose}>
+            <X className="h-4 w-4" />
+          </Button>
+        </div>
+
+        {/* tabs */}
+        <div className="flex shrink-0 border-b px-2">
+          {(Object.keys(TAB_LABELS) as DetailTab[]).map((t) => (
+            <button
+              key={t}
+              type="button"
+              onClick={() => onTabClick(t)}
+              className={cn(
+                "relative px-3 py-2 text-xs font-medium transition-colors",
+                tab === t
+                  ? "text-foreground"
+                  : "text-muted-foreground hover:text-foreground"
+              )}
+            >
+              {TAB_LABELS[t]}
+              {tab === t && (
+                <span className="absolute bottom-0 left-2 right-2 h-0.5 rounded bg-primary" />
+              )}
+            </button>
+          ))}
+        </div>
+
+        {/* body */}
+        <div className="flex-1 overflow-auto p-5">
+          {isLoading && (
+            <div className="flex h-40 items-center justify-center gap-2 text-sm text-muted-foreground">
+              <Loader2 className="h-4 w-4 animate-spin" />
+              加载详情…
+            </div>
+          )}
+          {!isLoading && cache === null && (
+            <div className="flex items-start gap-2 rounded-md border border-destructive/40 bg-destructive/10 p-3 text-sm text-destructive">
+              <AlertTriangle className="mt-0.5 h-4 w-4" />
+              详情加载失败,请关闭后重试。
+            </div>
+          )}
+          {detail && cache !== "loading" && (
+            <>
+              {tab === "info" && (
+                <InfoTab detail={detail} userId={userId} onChanged={onClose} />
+              )}
+              {tab === "subscription" && (
+                <SubscriptionTab
+                  cache={cache}
+                  userId={userId}
+                  onRefresh={() => void loadTab(userId, "subscription")}
+                />
+              )}
+              {tab === "balance" && (
+                <BalanceTab
+                  cache={cache}
+                  userId={userId}
+                  detail={detail}
+                  onRefresh={() => void loadTab(userId, "bills", true)}
+                />
+              )}
+              {tab === "devices" && (
+                <DevicesTab
+                  cache={cache}
+                  userId={userId}
+                  onRefresh={() => void loadTab(userId, "devices", true)}
+                />
+              )}
+              {tab === "bills" && (
+                <LedgerTab
+                  cache={cache}
+                  detail={detail}
+                  onRefresh={() => void loadTab(userId, "bills", true)}
+                />
+              )}
+            </>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* ===================== 各 Tab ===================== */
+
+function InfoTab({
+  detail,
+  userId,
+}: {
+  detail: AdminUserDetail;
+  userId: string;
+  onChanged: () => void;
+}): React.ReactElement {
+  const changeTier = useUsersStore((s) => s.changeTier);
+  const grant = useUsersStore((s) => s.grant);
+  const revokeSessions = useUsersStore((s) => s.revokeSessions);
+
+  const [tier, setTier] = React.useState<Tier>((detail.tier as Tier) ?? "beta");
+  const [status, setStatus] = React.useState<Status | "">(
+    (STATUSES as readonly string[]).includes(detail.status)
+      ? (detail.status as Status)
+      : ""
+  );
+  const [busy, setBusy] = React.useState<"" | "tier" | "grant" | "revoke">("");
+
+  const [grantOpen, setGrantOpen] = React.useState(false);
+
+  React.useEffect(() => {
+    setTier((detail.tier as Tier) ?? "beta");
+    setStatus(
+      (STATUSES as readonly string[]).includes(detail.status)
+        ? (detail.status as Status)
+        : ""
+    );
+  }, [detail.tier, detail.status]);
+
+  const onSaveTier = async () => {
+    setBusy("tier");
+    try {
+      await changeTier(userId, tier, status || undefined);
+      toast({ kind: "success", title: "已更新会员信息" });
+    } catch (e) {
+      const msg = classifyError(e);
+      toast({ kind: "error", title: msg.title, description: msg.description });
+    } finally {
+      setBusy("");
+    }
+  };
+
+  const onRevoke = async () => {
+    if (
+      !window.confirm(
+        `确定强制该用户(${userId.slice(0, 8)}…)下线吗?\n其所有登录会话将被撤销,需要重新登录。`
+      )
+    )
+      return;
+    setBusy("revoke");
+    try {
+      const r = await revokeSessions(userId, "admin 强制下线");
+      toast({
+        kind: "success",
+        title: "强制下线成功",
+        description: `已撤销 ${r.revokedCount} 个 session`,
+      });
+    } catch (e) {
+      const msg = classifyError(e);
+      toast({ kind: "error", title: msg.title, description: msg.description });
+    } finally {
+      setBusy("");
+    }
+  };
+
+  const onGrantSubmit = async (amount: number, note: string) => {
+    setBusy("grant");
+    try {
+      const r = await grant(userId, amount, note);
+      toast({
+        kind: "success",
+        title: "充值成功",
+        description: `已赠送 ${amount} 积分,当前余额 ${r.newBalance.toLocaleString()}`,
+      });
+      setGrantOpen(false);
+    } catch (e) {
+      const msg = classifyError(e);
+      toast({ kind: "error", title: msg.title, description: msg.description });
+    } finally {
+      setBusy("");
+    }
+  };
+
+  return (
+    <div className="space-y-5">
+      {/* summary grid */}
+      <div className="grid grid-cols-2 gap-x-6 gap-y-2 rounded-md border bg-muted/20 p-4 text-xs md:grid-cols-3">
+        <SummaryItem label="邮箱" value={detail.email ?? "—"} />
+        <SummaryItem label="userId" value={userId} mono />
+        <SummaryItem label="tier" value={userTierLabel(detail.tier)} />
+        <SummaryItem label="status" value={userStatusLabel(detail.status)} />
+        <SummaryItem
+          label="余额"
+          value={detail.balance.toLocaleString()}
+          mono
+        />
+        {detail.frozenBalance > 0 && (
+          <SummaryItem
+            label="(冻结)"
+            value={detail.frozenBalance.toLocaleString()}
+            mono
+          />
+        )}
+        <SummaryItem
+          label="累计充值"
+          value={(detail.lifetimeGrant ?? detail.totalRecharged).toLocaleString()}
+          mono
+        />
+        <SummaryItem
+          label="累计消费"
+          value={(detail.lifetimeConsumed ?? detail.totalSpent).toLocaleString()}
+          mono
+        />
+        <SummaryItem label="设备数" value={String(detail.deviceCount)} />
+        <SummaryItem
+          label="注册时间"
+          value={formatDate(detail.registeredAt ?? detail.activatedAt)}
+        />
+        <SummaryItem label="激活时间" value={formatDate(detail.activatedAt)} />
+        <SummaryItem label="到期时间" value={formatDate(detail.expireAt)} />
+        <SummaryItem label="最近活跃" value={formatDate(detail.lastSeenAt)} />
+      </div>
+
+      {/* 操作区:改 tier */}
+      <section className="space-y-3 rounded-md border p-4">
+        <div className="flex items-center gap-2 text-sm font-medium">
+          <KeyRound className="h-4 w-4" />
+          改 tier / status
+        </div>
+        <div className="space-y-2">
+          <div className="text-xs text-muted-foreground">会员等级</div>
+          <div className="flex flex-wrap gap-2">
+            {TIERS.map((t) => (
+              <Button
+                key={t}
+                size="sm"
+                variant={tier === t ? "default" : "outline"}
+                disabled={busy !== ""}
+                onClick={() => setTier(t)}
+              >
+                {t}
+              </Button>
+            ))}
+          </div>
+        </div>
+        <div className="space-y-2">
+          <div className="text-xs text-muted-foreground">状态</div>
+          <div className="flex flex-wrap gap-2">
+            <Button
+              size="sm"
+              variant={status === "" ? "default" : "outline"}
+              disabled={busy !== ""}
+              onClick={() => setStatus("")}
+            >
+              保持不变
+            </Button>
+            {STATUSES.map((s) => (
+              <Button
+                key={s}
+                size="sm"
+                variant={status === s ? "default" : "outline"}
+                disabled={busy !== ""}
+                onClick={() => setStatus(s)}
+              >
+                {s}
+              </Button>
+            ))}
+          </div>
+        </div>
+        <div className="flex justify-end pt-2">
+          <Button size="sm" disabled={busy !== ""} onClick={() => void onSaveTier()}>
+            {busy === "tier" ? (
+              <Loader2 className="mr-1 h-4 w-4 animate-spin" />
+            ) : null}
+            保存
+          </Button>
+        </div>
+      </section>
+
+      {/* 操作区:赠送 / 强制下线 */}
+      <section className="space-y-3 rounded-md border p-4">
+        <div className="flex items-center gap-2 text-sm font-medium">
+          <Power className="h-4 w-4" />
+          快捷操作
+        </div>
+        <div className="flex flex-wrap gap-2">
+          <Button
+            size="sm"
+            variant="outline"
+            disabled={busy !== ""}
+            onClick={() => setGrantOpen(true)}
+          >
+            <Coins className="mr-1 h-4 w-4" />
+            手动赠送
+          </Button>
+          <Button
+            size="sm"
+            variant="outline"
+            disabled={busy !== ""}
+            onClick={() => void onRevoke()}
+          >
+            {busy === "revoke" ? (
+              <Loader2 className="mr-1 h-4 w-4 animate-spin" />
+            ) : (
+              <KeyRound className="mr-1 h-4 w-4" />
+            )}
+            强制下线
+          </Button>
+        </div>
+      </section>
+
+      {grantOpen && (
+        <GrantDialog
+          onClose={() => setGrantOpen(false)}
+          onSubmit={(amount, note) => void onGrantSubmit(amount, note)}
+        />
+      )}
+    </div>
+  );
+}
+
+function SummaryItem({
+  label,
+  value,
+  mono = false,
+}: {
+  label: string;
+  value: string;
+  mono?: boolean;
+}): React.ReactElement {
+  return (
+    <div>
+      <div className="text-muted-foreground">{label}</div>
+      <div className={cn("font-medium", mono && "font-mono")}>{value}</div>
+    </div>
+  );
+}
+
+function SubscriptionTab({
+  cache,
+  userId,
+  onRefresh,
+}: {
+  cache: ReturnType<typeof useUsersStore.getState>["detailCache"][string];
+  userId: string;
+  onRefresh: () => void;
+}): React.ReactElement {
+  if (!cache || cache === "loading") return <></>;
+  const loading = cache.loadingTabs.subscription;
+  const err = cache.tabErrors.subscription;
+  const items = cache.subscriptions;
+
+  return (
+    <TabScaffold
+      title="订阅"
+      icon={<Receipt className="h-4 w-4" />}
+      loading={!!loading}
+      error={err ?? null}
+      onRefresh={onRefresh}
+      empty={!loading && !err && (items?.length ?? 0) === 0}
+      emptyText="该用户暂无订阅记录"
+    >
+      {items && items.length > 0 && (
+        <div className="space-y-2">
+          {items.map((s: AdminUserSubscription) => (
+            <div
+              key={s.subscriptionId}
+              className="rounded-md border bg-muted/20 p-3 text-xs"
+            >
+              <div className="flex items-center justify-between">
+                <div className="font-medium">{s.planCode}</div>
+                <Badge
+                  variant={
+                    s.status === "active"
+                      ? "default"
+                      : s.status === "expired"
+                        ? "outline"
+                        : "destructive"
+                  }
+                >
+                  {s.status}
+                </Badge>
+              </div>
+              <div className="mt-2 grid grid-cols-2 gap-y-1 md:grid-cols-4">
+                <SummaryItem
+                  label="本期额度"
+                  value={s.monthlyQuota.toLocaleString()}
+                  mono
+                />
+                <SummaryItem
+                  label="周期"
+                  value={`${formatDate(s.currentPeriodStart)} → ${formatDate(s.currentPeriodEnd)}`}
+                />
+                <SummaryItem label="开始" value={formatDate(s.startedAt)} />
+                <SummaryItem
+                  label="自动续费"
+                  value={s.autoRenew ? "是" : "否"}
+                />
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+    </TabScaffold>
+  );
+}
+
+function BalanceTab({
+  cache,
+  detail,
+  userId,
+  onRefresh,
+}: {
+  cache: ReturnType<typeof useUsersStore.getState>["detailCache"][string];
+  detail: AdminUserDetail;
+  userId: string;
+  onRefresh: () => void;
+}): React.ReactElement {
+  if (!cache || cache === "loading") return <></>;
+  const loading = cache.loadingTabs.bills;
+  const err = cache.tabErrors.bills;
+  const items = cache.ledger ?? [];
+
+  return (
+    <div className="space-y-4">
+      <div className="grid grid-cols-2 gap-3 rounded-md border bg-muted/20 p-4 text-xs md:grid-cols-4">
+        <SummaryItem
+          label="当前余额"
+          value={detail.balance.toLocaleString()}
+          mono
+        />
+        <SummaryItem
+          label="冻结"
+          value={detail.frozenBalance.toLocaleString()}
+          mono
+        />
+        <SummaryItem
+          label="累计充值"
+          value={(detail.lifetimeGrant ?? detail.totalRecharged).toLocaleString()}
+          mono
+        />
+        <SummaryItem
+          label="累计消费"
+          value={(detail.lifetimeConsumed ?? detail.totalSpent).toLocaleString()}
+          mono
+        />
+      </div>
+      <div className="flex items-center justify-between">
+        <div className="text-sm font-medium">最近账本(最多 20 条)</div>
+        <Button
+          size="sm"
+          variant="ghost"
+          onClick={onRefresh}
+          disabled={!!loading}
+          aria-label="刷新账本"
+        >
+          <RefreshCcw className={cn("h-4 w-4", loading && "animate-spin")} />
+        </Button>
+      </div>
+      {err && (
+        <div className="flex items-start gap-2 rounded-md border border-destructive/40 bg-destructive/10 p-3 text-sm text-destructive">
+          <AlertTriangle className="mt-0.5 h-4 w-4" />
+          {err}
+        </div>
+      )}
+      {!err && items.length === 0 && !loading && (
+        <div className="rounded-md border bg-muted/20 p-8 text-center text-xs text-muted-foreground">
+          暂无账本记录
+        </div>
+      )}
+      {!err && items.length > 0 && (
+        <div className="overflow-x-auto rounded-md border">
+          <table className="w-full text-xs">
+            <thead className="bg-muted/30 text-[10px] uppercase text-muted-foreground">
+              <tr>
+                <th className="px-3 py-2 text-left font-medium">时间</th>
+                <th className="px-3 py-2 text-left font-medium">类型</th>
+                <th className="px-3 py-2 text-left font-medium">来源</th>
+                <th className="px-3 py-2 text-right font-medium">金额</th>
+                <th className="px-3 py-2 text-left font-medium">说明</th>
+              </tr>
+            </thead>
+            <tbody>
+              {items.map((it) => (
+                <tr key={it.ledgerId} className="border-t">
+                  <td className="px-3 py-2 font-mono">{formatDate(it.createdAt)}</td>
+                  <td className="px-3 py-2">
+                    <Badge variant="outline">{it.type}</Badge>
+                  </td>
+                  <td className="px-3 py-2 font-mono text-muted-foreground">
+                    {it.source}
+                    {it.refId ? ` · ${it.refId.slice(0, 8)}…` : ""}
+                  </td>
+                  <td
+                    className={cn(
+                      "px-3 py-2 text-right tabular-nums",
+                      it.amount < 0 ? "text-destructive" : "text-emerald-600 dark:text-emerald-400"
+                    )}
+                  >
+                    {it.amount > 0 ? `+${it.amount}` : it.amount}
+                  </td>
+                  <td className="px-3 py-2 text-muted-foreground">
+                    {it.note || "—"}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function DevicesTab({
+  cache,
+  userId,
+  onRefresh,
+}: {
+  cache: ReturnType<typeof useUsersStore.getState>["detailCache"][string];
+  userId: string;
+  onRefresh: () => void;
+}): React.ReactElement {
+  const revokeDevice = useUsersStore((s) => s.revokeDevice);
+  if (!cache || cache === "loading") return <></>;
+  const loading = cache.loadingTabs.devices;
+  const err = cache.tabErrors.devices;
+  const items = cache.devices ?? [];
+
+  const onRevoke = async (d: AdminUserDevice) => {
+    if (
+      !window.confirm(
+        `确定撤销设备「${d.deviceName || d.deviceId.slice(0, 8)}」吗?\n该设备将被强制下线。`
+      )
+    )
+      return;
+    try {
+      await revokeDevice(userId, d.deviceId);
+      toast({ kind: "success", title: "设备已撤销" });
+    } catch (e) {
+      const msg = classifyError(e);
+      toast({ kind: "error", title: msg.title, description: msg.description });
+    }
+  };
+
+  return (
+    <TabScaffold
+      title="设备"
+      icon={<Smartphone className="h-4 w-4" />}
+      loading={!!loading}
+      error={err ?? null}
+      onRefresh={onRefresh}
+      empty={!loading && !err && items.length === 0}
+      emptyText="该用户暂无设备绑定"
+    >
+      {items.length > 0 && (
+        <div className="space-y-2">
+          {items.map((d) => (
+            <div
+              key={d.deviceId}
+              className="flex items-center justify-between rounded-md border bg-muted/20 p-3 text-xs"
+            >
+              <div>
+                <div className="font-medium">
+                  {d.deviceName || d.deviceId.slice(0, 8) + "…"}
+                </div>
+                <div className="text-muted-foreground">
+                  <span className="font-mono">{d.deviceId.slice(0, 12)}…</span>
+                  {" · "}
+                  {d.platform}
+                  {" · 最近活跃 "}
+                  {formatDate(d.lastSeenAt)}
+                </div>
+              </div>
+              <div className="flex items-center gap-2">
+                <Badge
+                  variant={
+                    d.status === "active" ? "default" : d.status === "revoked" ? "destructive" : "outline"
+                  }
+                >
+                  {d.status}
+                </Badge>
+                {d.status === "active" && (
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    onClick={() => void onRevoke(d)}
+                  >
+                    撤销
+                  </Button>
+                )}
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+    </TabScaffold>
+  );
+}
+
+function LedgerTab({
+  cache,
+  detail,
+  onRefresh,
+}: {
+  cache: ReturnType<typeof useUsersStore.getState>["detailCache"][string];
+  detail: AdminUserDetail;
+  onRefresh: () => void;
+}): React.ReactElement {
+  return <BalanceTab cache={cache} detail={detail} userId="" onRefresh={onRefresh} />;
+}
+
+/* ===================== 公共组件 ===================== */
+
+function TabScaffold({
+  title,
+  icon,
+  loading,
+  error,
+  onRefresh,
+  empty,
+  emptyText,
+  children,
+}: {
+  title: string;
+  icon: React.ReactNode;
+  loading: boolean;
+  error: string | null;
+  onRefresh: () => void;
+  empty: boolean;
+  emptyText: string;
+  children: React.ReactNode;
+}): React.ReactElement {
+  return (
+    <div className="space-y-3">
+      <div className="flex items-center justify-between">
+        <div className="flex items-center gap-2 text-sm font-medium">
+          {icon}
+          {title}
+        </div>
+        <Button
+          size="sm"
+          variant="ghost"
+          onClick={onRefresh}
+          disabled={loading}
+          aria-label={`刷新${title}`}
+        >
+          <RefreshCcw className={cn("h-4 w-4", loading && "animate-spin")} />
+        </Button>
+      </div>
+      {error && (
+        <div className="flex items-start gap-2 rounded-md border border-destructive/40 bg-destructive/10 p-3 text-sm text-destructive">
+          <AlertTriangle className="mt-0.5 h-4 w-4" />
+          {error}
+        </div>
+      )}
+      {loading && (
+        <div className="flex h-24 items-center justify-center gap-2 text-sm text-muted-foreground">
+          <Loader2 className="h-4 w-4 animate-spin" />
+          加载中…
+        </div>
+      )}
+      {!loading && !error && empty && (
+        <div className="rounded-md border bg-muted/20 p-8 text-center text-xs text-muted-foreground">
+          {emptyText}
+        </div>
+      )}
+      {!loading && !error && !empty && children}
+    </div>
+  );
+}
+
+function GrantDialog({
+  onClose,
+  onSubmit,
+}: {
+  onClose: () => void;
+  onSubmit: (amount: number, note: string) => void;
+}): React.ReactElement {
+  const [amount, setAmount] = React.useState("100");
+  const [note, setNote] = React.useState("");
+  const [err, setErr] = React.useState<string | null>(null);
+
+  const submit = (e: React.FormEvent) => {
+    e.preventDefault();
+    const a = Number(amount);
+    if (!Number.isFinite(a) || a <= 0 || !Number.isInteger(a)) {
+      setErr("金额必须是大于 0 的整数");
+      return;
+    }
+    if (a > 100_000) {
+      setErr("单次赠送不得超过 100,000");
+      return;
+    }
+    onSubmit(a, note);
+  };
+
+  return (
+    <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/40 p-4">
+      <div className="w-full max-w-md rounded-lg border bg-card p-5 shadow-xl">
+        <div className="mb-3 flex items-center justify-between">
+          <div className="text-sm font-semibold">手动赠送积分</div>
+          <Button size="icon" variant="ghost" onClick={onClose}>
+            <X className="h-4 w-4" />
+          </Button>
+        </div>
+        <form onSubmit={submit} className="space-y-3">
+          <div className="space-y-1">
+            <Label htmlFor="amount">赠送数量</Label>
+            <Input
+              id="amount"
+              type="number"
+              min={1}
+              value={amount}
+              onChange={(e) => setAmount(e.target.value)}
+            />
+          </div>
+          <div className="space-y-1">
+            <Label htmlFor="note">备注</Label>
+            <Input
+              id="note"
+              value={note}
+              onChange={(e) => setNote(e.target.value)}
+              placeholder="可选,如:客服补偿"
+            />
+          </div>
+          {err && <div className="text-sm text-destructive">{err}</div>}
+          <div className="flex justify-end gap-2 pt-2">
+            <Button type="button" variant="ghost" onClick={onClose}>
+              取消
+            </Button>
+            <Button type="submit">
+              确认赠送
+              <ChevronRight className="ml-1 h-4 w-4" />
+            </Button>
+          </div>
+        </form>
+      </div>
+    </div>
+  );
+}

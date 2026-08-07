@@ -58,6 +58,25 @@ export interface RequestOptions {
   headers?: Record<string, string>;
   /** 跳过 401 自动跳登录(用于 /admin/login 自己) */
   skipAuthRedirect?: boolean;
+  /** 是否禁用自动重试(默认 GET 自动重试,POST 等不重试) */
+  noRetry?: boolean;
+  responseType?: "json" | "blob";
+}
+
+/** 幂等 GET 重试次数上限(P0-B M1 设计) */
+const MAX_IDEMPOTENT_RETRY = 2;
+/** 退避基础毫秒 */
+const RETRY_BASE_MS = 250;
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => window.setTimeout(resolve, ms));
+}
+
+/** 判断是否值得重试:5xx 或 NETWORK_ERROR(0) */
+function isRetryable(httpStatus: number, code?: string): boolean {
+  if (code === "NETWORK_ERROR") return true;
+  if (httpStatus >= 500 && httpStatus < 600) return true;
+  return false;
 }
 
 function buildUrl(path: string, query?: Record<string, unknown>): string {
@@ -115,7 +134,17 @@ export async function apiRequest<T = unknown>(
   path: string,
   opts: RequestOptions = {}
 ): Promise<T> {
-  const { method = "GET", json, query, headers = {}, skipAuthRedirect } = opts;
+  const {
+    method = "GET",
+    json,
+    query,
+    headers = {},
+    skipAuthRedirect,
+    noRetry,
+    responseType = "json",
+  } = opts;
+  const isIdempotent = method === "GET";
+  const maxAttempts = !isIdempotent || noRetry ? 1 : MAX_IDEMPOTENT_RETRY + 1;
 
   const init: RequestInit = {
     method,
@@ -131,6 +160,50 @@ export async function apiRequest<T = unknown>(
   }
 
   const url = buildUrl(path, query);
+  let lastError: ApiClientError | null = null;
+
+  for (let attempt = 0; attempt < maxAttempts; attempt++) {
+    if (attempt > 0) {
+      // 指数退避:250ms, 500ms
+      await sleep(RETRY_BASE_MS * Math.pow(2, attempt - 1));
+    }
+    try {
+      const result = await performRequest<T>(
+        url,
+        init,
+        skipAuthRedirect === true,
+        responseType
+      );
+      return result;
+    } catch (e) {
+      if (e instanceof ApiClientError) {
+        lastError = e;
+        // 401 不重试(cookie 已失效,重试无意义)
+        if (e.httpStatus === 401) throw e;
+        // 4xx 业务错误也不重试
+        if (e.httpStatus >= 400 && e.httpStatus < 500 && e.httpStatus !== 0) throw e;
+        // 5xx / NETWORK_ERROR 才考虑重试
+        if (!isRetryable(e.httpStatus, e.code)) throw e;
+        // 已是最后一次 → 直接抛
+        if (attempt === maxAttempts - 1) throw e;
+      } else {
+        throw e;
+      }
+    }
+  }
+  // 不可达,理论走不到这里
+  throw (
+    lastError ??
+    new ApiClientError("INTERNAL_ERROR", "未知网络错误", 0)
+  );
+}
+
+async function performRequest<T>(
+  url: string,
+  init: RequestInit,
+  skipAuthRedirect: boolean,
+  responseType: "json" | "blob"
+): Promise<T> {
   let resp: Response;
   try {
     resp = await fetch(url, init);
@@ -165,8 +238,10 @@ export async function apiRequest<T = unknown>(
     );
   }
 
-  // 解析响应
   if (resp.status === 204) return undefined as unknown as T;
+  if (resp.ok && responseType === "blob") {
+    return (await resp.blob()) as T;
+  }
   let data: unknown;
   const text = await resp.text();
   if (text) {
@@ -180,7 +255,6 @@ export async function apiRequest<T = unknown>(
   }
 
   if (!resp.ok) {
-    // 错误:优先解 envelope(顶层 code/message),否则兼容旧 error.* 结构
     if (data && typeof data === "object" && "code" in data && "message" in data) {
       const e = data as ApiErrorBody;
       throw new ApiClientError(e.code, e.message, resp.status, e.requestId, e.details);
@@ -202,6 +276,5 @@ export async function apiRequest<T = unknown>(
   if (env) {
     return env.data as T;
   }
-  // 老接口无 envelope → 原样返回
   return data as T;
 }

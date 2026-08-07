@@ -1,6 +1,8 @@
 import { clsx, type ClassValue } from "clsx";
 import { twMerge } from "tailwind-merge";
 
+import { apiRequest } from "@/api/client";
+
 /** 标准 shadcn 风格 cn:clsx + tailwind-merge */
 export function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
@@ -77,19 +79,30 @@ export async function downloadCsv(
   path: string,
   filename: string
 ): Promise<void> {
-  const base = (import.meta.env.VITE_API_BASE_URL as string) || "";
-  const resp = await fetch((base || "") + path, { credentials: "include" });
-  if (!resp.ok) {
-    let msg = `HTTP ${resp.status}`;
-    try {
-      const body = (await resp.json()) as { message?: string };
-      msg = body.message ?? msg;
-    } catch {
-      // ignore
-    }
-    throw new Error(msg);
-  }
-  const blob = await resp.blob();
+  const blob = await apiRequest<Blob>(path, {
+    headers: { Accept: "text/csv" },
+    responseType: "blob",
+  });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+}
+
+/**
+ * 把内存里的字符串下载为文本文件。
+ * 用于「签发的明文 codes 一键下载 .txt」。
+ */
+export function downloadTextFile(
+  text: string,
+  filename: string,
+  mime = "text/plain;charset=utf-8"
+): void {
+  const blob = new Blob([text], { type: mime });
   const url = URL.createObjectURL(blob);
   const a = document.createElement("a");
   a.href = url;

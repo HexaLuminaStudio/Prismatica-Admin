@@ -1,12 +1,10 @@
 /**
- * 账单管理页(2026-08-06 新增)
+ * Bills 账单管理页(2026-08-06 P0-B M5 重构)
  *
  * 功能:
  *  - 列表(分页 + 过滤:status / userId / days)
- *  - 行展开:详情(description / taskId / 幂等键 / 余额变动 / 资源用量)
- *  - 顶部「导出 CSV」
- *
- * 数据源:GET /v1/admin/bills
+ *  - 行点击 → 抽屉式详情(BillDetailDrawer)
+ *  - CSV 导出(带当前筛选)
  */
 
 import * as React from "react";
@@ -17,13 +15,11 @@ import {
   Download,
   Loader2,
   AlertTriangle,
-  ChevronDown,
-  ChevronRight,
 } from "lucide-react";
-import { AdminBillItem, ListBillsParams, listBills } from "@/api/bills";
-import { downloadCsv } from "@/lib/utils";
+import { useBillsStore, EMPTY_BILLS_FILTERS } from "@/store/bills";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
 import {
   Card,
@@ -32,10 +28,19 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
-import { formatDate, cn } from "@/lib/utils";
+import { formatDate, cn, downloadCsv } from "@/lib/utils";
 import { billStatusLabel } from "@/lib/labels";
+import { classifyError } from "@/lib/errorMessages";
+import { toast } from "@/components/Toast";
+import { BillDetailDrawer } from "@/components/BillDetailDrawer";
 
-const STATUSES = ["", "pending", "settled", "refunded"] as const;
+const STATUS_OPTIONS = [
+  { value: "", label: "全部" },
+  { value: "pending", label: "待结算" },
+  { value: "settled", label: "已结算" },
+  { value: "refunded", label: "已退款" },
+] as const;
+
 const DAYS_OPTIONS = [
   { value: "", label: "全部时间" },
   { value: "7", label: "近 7 天" },
@@ -50,65 +55,45 @@ const STATUS_BADGE: Record<string, "default" | "secondary" | "destructive"> = {
 };
 
 export function BillsPage(): React.ReactElement {
-  const [items, setItems] = React.useState<AdminBillItem[]>([]);
-  const [nextCursor, setNextCursor] = React.useState<string | null>(null);
-  const [filterStatus, setFilterStatus] = React.useState<string>("");
-  const [days, setDays] = React.useState<string>("");
-  const [userId, setUserId] = React.useState("");
-  const [loading, setLoading] = React.useState(true);
-  const [error, setError] = React.useState<string | null>(null);
-  const [expanded, setExpanded] = React.useState<string | null>(null);
-  const [exporting, setExporting] = React.useState(false);
+  const items = useBillsStore((s) => s.items);
+  const nextCursor = useBillsStore((s) => s.nextCursor);
+  const filters = useBillsStore((s) => s.filters);
+  const setFilters = useBillsStore((s) => s.setFilters);
+  const resetFilters = useBillsStore((s) => s.resetFilters);
+  const loadList = useBillsStore((s) => s.loadList);
+  const loadMore = useBillsStore((s) => s.loadMore);
+  const listLoading = useBillsStore((s) => s.listLoading);
+  const listError = useBillsStore((s) => s.listError);
 
-  const load = React.useCallback(
-    async (opts: { reset?: boolean; cursor?: string } = {}) => {
-      setLoading(true);
-      setError(null);
-      try {
-        const resp = await listBills({
-          limit: 50,
-          ...(filterStatus ? { status: filterStatus } : {}),
-          ...(days ? { days: Number(days) } : {}),
-          ...(userId.trim() ? { userId: userId.trim() } : {}),
-          ...(opts.cursor ? { cursor: opts.cursor } : {}),
-        });
-        setItems((prev) => (opts.reset ? resp.items : [...prev, ...resp.items]));
-        setNextCursor(resp.nextCursor);
-      } catch (e) {
-        setError(e instanceof Error ? e.message : "加载失败");
-      } finally {
-        setLoading(false);
-      }
-    },
-    [filterStatus, days, userId]
-  );
+  const [exporting, setExporting] = React.useState(false);
+  const [drawerBillId, setDrawerBillId] = React.useState<string | null>(null);
 
   React.useEffect(() => {
-    void load({ reset: true });
-  }, [load]);
+    void loadList({ reset: true }).catch(() => {});
+  }, [loadList]);
+
+  const filtersActive =
+    filters.status !== "" || filters.days !== "" || filters.userId.trim() !== "";
 
   const onExport = async () => {
     setExporting(true);
-    setError(null);
     try {
-      const params = new URLSearchParams();
-      if (filterStatus) params.set("status", filterStatus);
-      if (days) params.set("days", days);
-      if (userId.trim()) params.set("userId", userId.trim());
-      const qs = params.toString();
+      const q = new URLSearchParams();
+      if (filters.status) q.set("status", filters.status);
+      if (filters.days) q.set("days", filters.days);
+      if (filters.userId.trim()) q.set("userId", filters.userId.trim());
+      const qs = q.toString();
       await downloadCsv(
         `/v1/admin/export/bills.csv${qs ? `?${qs}` : ""}`,
         `bills-${new Date().toISOString().slice(0, 10)}.csv`
       );
+      toast({ kind: "success", title: "导出已开始" });
     } catch (e) {
-      setError(e instanceof Error ? e.message : "导出失败");
+      const msg = classifyError(e);
+      toast({ kind: "error", title: "导出失败", description: msg.description });
     } finally {
       setExporting(false);
     }
-  };
-
-  const toggleExpand = (billId: string) => {
-    setExpanded((prev) => (prev === billId ? null : billId));
   };
 
   return (
@@ -125,7 +110,12 @@ export function BillsPage(): React.ReactElement {
             </CardDescription>
           </div>
           <div className="flex items-center gap-2">
-            <Button variant="outline" size="sm" onClick={() => void onExport()} disabled={exporting}>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => void onExport()}
+              disabled={exporting || listLoading}
+            >
               {exporting ? (
                 <Loader2 className="mr-1 h-4 w-4 animate-spin" />
               ) : (
@@ -134,59 +124,105 @@ export function BillsPage(): React.ReactElement {
               导出 CSV
             </Button>
             <Button
-              size="sm"
               variant="ghost"
-              onClick={() => void load({ reset: true })}
-              disabled={loading}
+              size="sm"
+              onClick={() => void loadList({ reset: true })}
+              disabled={listLoading}
             >
-              <RefreshCcw className={cn("h-4 w-4", loading && "animate-spin")} />
+              <RefreshCcw
+                className={cn("h-4 w-4", listLoading && "animate-spin")}
+              />
             </Button>
           </div>
         </CardHeader>
         <CardContent>
-          <div className="mb-3 flex flex-wrap items-center gap-2 text-xs">
-            <span className="text-muted-foreground">状态:</span>
-            {STATUSES.map((s) => (
-              <Button
-                key={s || "all"}
-                size="sm"
-                variant={filterStatus === s ? "default" : "outline"}
-                onClick={() => setFilterStatus(s)}
-                className="h-7"
-              >
-                {s ? billStatusLabel(s) : "全部"}
-              </Button>
-            ))}
-            <span className="ml-4 text-muted-foreground">时间:</span>
-            {DAYS_OPTIONS.map((o) => (
-              <Button
-                key={o.value || "all-d"}
-                size="sm"
-                variant={days === o.value ? "default" : "outline"}
-                onClick={() => setDays(o.value)}
-                className="h-7"
-              >
-                {o.label}
-              </Button>
-            ))}
-            <div className="relative ml-4 flex w-64 items-center">
-              <Search className="absolute left-2 top-2.5 h-4 w-4 text-muted-foreground" />
-              <Input
-                value={userId}
-                onChange={(e) => setUserId(e.target.value)}
-                placeholder="按 userId 精确筛选"
-                className="h-8 pl-8"
-                onKeyDown={(e) => {
-                  if (e.key === "Enter") void load({ reset: true });
-                }}
-              />
+          {/* 筛选条 */}
+          <div className="mb-4 grid grid-cols-1 gap-3 rounded-md border bg-muted/20 p-3 md:grid-cols-4">
+            <div className="space-y-1">
+              <Label className="text-xs">状态</Label>
+              <div className="flex flex-wrap gap-1">
+                {STATUS_OPTIONS.map((o) => (
+                  <Button
+                    key={o.value || "all"}
+                    size="sm"
+                    variant={filters.status === o.value ? "default" : "outline"}
+                    onClick={() =>
+                      setFilters({
+                        status: o.value as typeof filters.status,
+                      })
+                    }
+                    className="h-7"
+                  >
+                    {o.label}
+                  </Button>
+                ))}
+              </div>
+            </div>
+            <div className="space-y-1">
+              <Label className="text-xs">时间范围</Label>
+              <div className="flex flex-wrap gap-1">
+                {DAYS_OPTIONS.map((o) => (
+                  <Button
+                    key={o.value || "all-d"}
+                    size="sm"
+                    variant={filters.days === o.value ? "default" : "outline"}
+                    onClick={() => setFilters({ days: o.value })}
+                    className="h-7"
+                  >
+                    {o.label}
+                  </Button>
+                ))}
+              </div>
+            </div>
+            <div className="space-y-1 md:col-span-2">
+              <Label htmlFor="userId" className="text-xs">
+                按 userId 筛选
+              </Label>
+              <div className="relative">
+                <Search className="absolute left-2 top-2.5 h-4 w-4 text-muted-foreground" />
+                <Input
+                  id="userId"
+                  value={filters.userId}
+                  onChange={(e) => setFilters({ userId: e.target.value })}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") void loadList({ reset: true });
+                  }}
+                  placeholder="精确匹配用户 ID"
+                  className="pl-8"
+                />
+              </div>
+            </div>
+            <div className="md:col-span-4 flex items-center justify-between">
+              <div className="text-xs text-muted-foreground">
+                {filtersActive ? "已启用筛选条件" : "未启用任何筛选"}
+              </div>
+              <div className="flex gap-2">
+                <Button
+                  size="sm"
+                  onClick={() => void loadList({ reset: true })}
+                  disabled={listLoading}
+                >
+                  应用
+                </Button>
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  onClick={() => {
+                    resetFilters();
+                    void loadList({ reset: true });
+                  }}
+                  disabled={!filtersActive}
+                >
+                  清空
+                </Button>
+              </div>
             </div>
           </div>
 
-          {error && (
-            <div className="mb-3 flex items-start gap-2 rounded-md border border-destructive/40 bg-destructive/5 p-3 text-sm text-destructive">
+          {listError && (
+            <div className="mb-3 flex items-start gap-2 rounded-md border border-destructive/40 bg-destructive/10 p-3 text-sm text-destructive">
               <AlertTriangle className="mt-0.5 h-4 w-4" />
-              <div>{error}</div>
+              <div>{listError}</div>
             </div>
           )}
 
@@ -194,7 +230,6 @@ export function BillsPage(): React.ReactElement {
             <table className="w-full text-sm">
               <thead>
                 <tr className="border-b text-xs uppercase text-muted-foreground">
-                  <th className="w-8 py-2 text-left"></th>
                   <th className="py-2 text-left font-medium">创建时间</th>
                   <th className="py-2 text-left font-medium">账单 ID</th>
                   <th className="py-2 text-left font-medium">用户</th>
@@ -202,102 +237,74 @@ export function BillsPage(): React.ReactElement {
                   <th className="py-2 text-right font-medium">预估/实际</th>
                   <th className="py-2 text-left font-medium">状态</th>
                   <th className="py-2 text-left font-medium">结算时间</th>
+                  <th className="py-2 text-right font-medium">操作</th>
                 </tr>
               </thead>
               <tbody>
-                {items.length === 0 && !loading && (
+                {items.length === 0 && !listLoading && (
                   <tr>
-                    <td colSpan={8} className="py-12 text-center text-muted-foreground">
+                    <td
+                      colSpan={8}
+                      className="py-12 text-center text-muted-foreground"
+                    >
                       暂无账单
                     </td>
                   </tr>
                 )}
                 {items.map((b) => (
-                  <React.Fragment key={b.billId}>
-                    <tr
-                      className="cursor-pointer border-b hover:bg-accent/40"
-                      onClick={() => toggleExpand(b.billId)}
-                    >
-                      <td className="py-2">
-                        {expanded === b.billId ? (
-                          <ChevronDown className="h-4 w-4" />
-                        ) : (
-                          <ChevronRight className="h-4 w-4" />
-                        )}
-                      </td>
-                      <td className="py-2 text-xs">{formatDate(b.createdAt)}</td>
-                      <td className="py-2 font-mono text-xs">{b.billId.slice(0, 8)}…</td>
-                      <td className="py-2 text-xs">
-                        {b.displayName ? (
-                          <span>
-                            <span className="font-medium">{b.displayName}</span>
-                            <span className="ml-1 font-mono text-muted-foreground">
-                              ({b.userId.slice(0, 8)}…)
-                            </span>
+                  <tr
+                    key={b.billId}
+                    className="cursor-pointer border-b hover:bg-accent/40"
+                    onClick={() => setDrawerBillId(b.billId)}
+                  >
+                    <td className="py-2 text-xs">{formatDate(b.createdAt)}</td>
+                    <td className="py-2 font-mono text-xs">
+                      {b.billId.slice(0, 8)}…
+                    </td>
+                    <td className="py-2 text-xs">
+                      {b.displayName ? (
+                        <span>
+                          <span className="font-medium">{b.displayName}</span>
+                          <span className="ml-1 font-mono text-muted-foreground">
+                            ({b.userId.slice(0, 8)}…)
                           </span>
-                        ) : (
-                          <span className="font-mono text-muted-foreground">
-                            {b.userId.slice(0, 8)}…
-                          </span>
-                        )}
-                      </td>
-                      <td className="py-2">{b.actionDisplayName || b.actionType}</td>
-                      <td className="py-2 text-right tabular-nums text-xs">
-                        {b.estimatedCost.toLocaleString()} /{" "}
-                        <span className={b.realCost > b.estimatedCost ? "text-destructive" : ""}>
-                          {b.realCost.toLocaleString()}
                         </span>
-                      </td>
-                      <td className="py-2">
-                        <Badge variant={STATUS_BADGE[b.status] ?? "secondary"}>
-                          {billStatusLabel(b.status)}
-                        </Badge>
-                      </td>
-                      <td className="py-2 text-xs">
-                        {formatDate(b.settledAt)}
-                      </td>
-                    </tr>
-                    {expanded === b.billId && (
-                      <tr className="border-b bg-muted/30">
-                        <td colSpan={8} className="p-4">
-                          <div className="grid grid-cols-2 gap-x-6 gap-y-1 text-xs md:grid-cols-4">
-                            <div>
-                              <span className="text-muted-foreground">billId: </span>
-                              <span className="font-mono">{b.billId}</span>
-                            </div>
-                            <div>
-                              <span className="text-muted-foreground">userId: </span>
-                              <span className="font-mono">{b.userId}</span>
-                            </div>
-                            <div>
-                              <span className="text-muted-foreground">taskId: </span>
-                              <span className="font-mono">{b.taskId || "—"}</span>
-                            </div>
-                            <div>
-                              <span className="text-muted-foreground">幂等键: </span>
-                              <span className="font-mono">{b.idempotencyKey || "—"}</span>
-                            </div>
-                            <div>
-                              <span className="text-muted-foreground">余额变动: </span>
-                              {b.balanceBefore.toLocaleString()} → {b.balanceAfter.toLocaleString()}
-                            </div>
-                            <div>
-                              <span className="text-muted-foreground">资源用量: </span>
-                              <span className="tabular-nums">{b.resourceUsed.toLocaleString()}</span>
-                            </div>
-                            <div>
-                              <span className="text-muted-foreground">actionType: </span>
-                              <span className="font-mono">{b.actionType}</span>
-                            </div>
-                            <div>
-                              <span className="text-muted-foreground">描述: </span>
-                              <span>{b.description || "—"}</span>
-                            </div>
-                          </div>
-                        </td>
-                      </tr>
-                    )}
-                  </React.Fragment>
+                      ) : (
+                        <span className="font-mono text-muted-foreground">
+                          {b.userId.slice(0, 8)}…
+                        </span>
+                      )}
+                    </td>
+                    <td className="py-2">{b.actionDisplayName || b.actionType}</td>
+                    <td className="py-2 text-right tabular-nums text-xs">
+                      {b.estimatedCost.toLocaleString()} /{" "}
+                      <span
+                        className={
+                          b.realCost > b.estimatedCost ? "text-destructive" : ""
+                        }
+                      >
+                        {b.realCost.toLocaleString()}
+                      </span>
+                    </td>
+                    <td className="py-2">
+                      <Badge variant={STATUS_BADGE[b.status] ?? "secondary"}>
+                        {billStatusLabel(b.status)}
+                      </Badge>
+                    </td>
+                    <td className="py-2 text-xs">{formatDate(b.settledAt)}</td>
+                    <td className="py-2 text-right">
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setDrawerBillId(b.billId);
+                        }}
+                      >
+                        详情
+                      </Button>
+                    </td>
+                  </tr>
                 ))}
               </tbody>
             </table>
@@ -307,16 +314,23 @@ export function BillsPage(): React.ReactElement {
               <Button
                 variant="outline"
                 size="sm"
-                disabled={loading}
-                onClick={() => void load({ cursor: nextCursor })}
+                disabled={listLoading}
+                onClick={() => void loadMore()}
               >
-                {loading ? <Loader2 className="mr-1 h-4 w-4 animate-spin" /> : null}
+                {listLoading ? (
+                  <Loader2 className="mr-1 h-4 w-4 animate-spin" />
+                ) : null}
                 加载更多
               </Button>
             </div>
           )}
         </CardContent>
       </Card>
+
+      <BillDetailDrawer
+        billId={drawerBillId}
+        onClose={() => setDrawerBillId(null)}
+      />
     </div>
   );
 }
