@@ -194,10 +194,10 @@ export async function deleteUser(
   userId: string,
   confirm: string
 ): Promise<{ userId: string; deletedAt: string }> {
-  return apiRequest(
-    `/v1/admin/users/${encodeURIComponent(userId)}?confirm=${encodeURIComponent(confirm)}`,
-    { method: "DELETE" }
-  );
+  return apiRequest(`/v1/admin/users/${encodeURIComponent(userId)}`, {
+    method: "DELETE",
+    query: { confirm },
+  });
 }
 
 export async function batchUsers(input: {
