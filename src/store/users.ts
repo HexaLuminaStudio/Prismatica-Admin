@@ -1,11 +1,12 @@
 /**
- * Users store(zustand,2026-08-06 P0-B M1)
+ * Users store(zustand,2026-08-07 运营管理增强)
  *
  * 职责:
- *  - 列表分页 + 筛选状态(status / tier / 时间范围 / 关键词)
+ *  - 列表分页 + 筛选(status / tier / 时间范围 / 关键词)
  *  - 详情缓存(按 userId)
- *  - 写操作:改 tier / 强制下线 / 手动赠送
- *  - 详情子数据:订阅 / 设备 / 账单(独立缓存,按需加载)
+ *  - 写操作:创建 / 改 tier / 改状态 / 改邮箱 / 改昵称 / 重置密码 / 强制下线 / 手动赠送 / 删除
+ *  - 批量操作:改状态 / 重置密码 / 软删除
+ *  - 详情子数据:订阅 / 设备 / 账本(独立缓存,按需加载)
  *
  * 所有 HTTP 调用通过 api/users.ts;错误抛出原样由页面层捕获并 toast。
  */
@@ -24,14 +25,18 @@ import {
   revokeUserDevice,
   updateUser,
   grantBalance,
+  resetUserPassword,
+  deleteUser,
+  batchUsers,
   revokeUserSessions,
+  createUser,
   type ListUsersParams,
   listUsers,
 } from "@/api/users";
 
 export interface UsersFilters {
-  status: "" | "active" | "suspended" | "expired";
-  tier: "" | "guest" | "trial" | "beta" | "beta_pro" | "paid";
+  status: "" | "active" | "paused" | "suspended" | "expired" | "banned" | "deleted";
+  tier: "" | "free" | "pro" | "team" | "guest" | "trial" | "beta" | "beta_pro" | "paid";
   /** 注册起始日(YYYY-MM-DD),空字符串表示不限 */
   registeredAfter: string;
   /** 注册截止日(YYYY-MM-DD),空字符串表示不限 */
@@ -67,6 +72,8 @@ export interface UsersState {
   listError: string | null;
   /** 已加载到内存中所有 userId 的详情缓存 */
   detailCache: Record<string, UserDetailCache | "loading" | null>;
+  /** 最近一次创建/批量操作结果 */
+  lastAction: { kind: string; message: string } | null;
 
   // actions
   setFilters: (patch: Partial<UsersFilters>) => void;
@@ -86,10 +93,16 @@ export interface UsersState {
   ) => Promise<void>;
 
   // 写操作(成功后自动 refreshDetail)
-  changeTier: (userId: string, tier: string, status?: string) => Promise<void>;
+  createUser: (input: { email: string; password: string; displayName?: string; tier?: string; status?: string }) => Promise<AdminUserDetail>;
+  changeProfile: (userId: string, patch: { tier?: string; status?: string; email?: string; displayName?: string }) => Promise<void>;
   grant: (userId: string, amount: number, note: string) => Promise<{ newBalance: number }>;
+  resetPassword: (userId: string) => Promise<{ newPassword: string }>;
   revokeSessions: (userId: string, reason?: string) => Promise<{ revokedCount: number }>;
   revokeDevice: (userId: string, deviceId: string) => Promise<void>;
+  removeUser: (userId: string) => Promise<void>;
+
+  // 批量操作
+  batch: (input: { action: "update_status" | "reset_password" | "delete"; userIds: string[]; status?: string }) => Promise<{ successCount: number; failedCount: number; items: Array<Record<string, unknown>> }>;
 
   // 测试 / 调试
   reset: () => void;
@@ -97,7 +110,7 @@ export interface UsersState {
 
 const INITIAL: Pick<
   UsersState,
-  "items" | "nextCursor" | "filters" | "listLoading" | "listError" | "detailCache"
+  "items" | "nextCursor" | "filters" | "listLoading" | "listError" | "detailCache" | "lastAction"
 > = {
   items: [],
   nextCursor: null,
@@ -105,6 +118,7 @@ const INITIAL: Pick<
   listLoading: false,
   listError: null,
   detailCache: {},
+  lastAction: null,
 };
 
 export function filtersToParams(filters: UsersFilters, cursor?: string): ListUsersParams {
@@ -190,6 +204,7 @@ export const useUsersStore = create<UsersState>((set, get) => ({
                 tier: detail.tier,
                 status: detail.status,
                 balance: detail.balance,
+                email: detail.email,
               }
             : it
         ),
@@ -254,8 +269,14 @@ export const useUsersStore = create<UsersState>((set, get) => ({
     }
   },
 
-  async changeTier(userId, tier, status) {
-    await updateUser(userId, tier, status);
+  async createUser(input) {
+    const detail = await createUser(input);
+    await get().loadList({ reset: true });
+    return detail;
+  },
+
+  async changeProfile(userId, patch) {
+    await updateUser(userId, patch);
     await get().refreshDetail(userId);
   },
 
@@ -269,6 +290,11 @@ export const useUsersStore = create<UsersState>((set, get) => ({
       set((s) => ({ detailCache: { ...s.detailCache, [userId]: { ...cache } } }));
     }
     return { newBalance: r.newBalance };
+  },
+
+  async resetPassword(userId) {
+    const r = await resetUserPassword(userId);
+    return r;
   },
 
   async revokeSessions(userId, reason) {
@@ -285,6 +311,20 @@ export const useUsersStore = create<UsersState>((set, get) => ({
       cache.devices = null;
       set((s) => ({ detailCache: { ...s.detailCache, [userId]: { ...cache } } }));
     }
+  },
+
+  async removeUser(userId) {
+    await deleteUser(userId, userId);
+    set((s) => ({
+      items: s.items.filter((it) => it.userId !== userId),
+      detailCache: { ...s.detailCache, [userId]: null },
+    }));
+  },
+
+  async batch(input) {
+    const r = await batchUsers(input);
+    await get().loadList({ reset: true });
+    return r;
   },
 
   reset() {

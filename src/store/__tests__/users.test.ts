@@ -1,5 +1,5 @@
 /**
- * users store 单测(2026-08-06 P0-B M7)
+ * users store 单测(2026-08-07 运营管理增强)
  *
  * 用 vi.mock 替换 @/api/users;验证:
  *  - setFilters 合并 patch
@@ -7,6 +7,7 @@
  *  - loadList(reset=true) 替换 items;loadList(reset=false, cursor) 追加
  *  - 错误时 listError 被记录
  *  - ensureDetail 命中缓存跳过,缓存命中 null 仍重拉
+ *  - changeProfile / grant / revokeSessions 各自走 store 的写操作流
  */
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -22,6 +23,10 @@ vi.mock("@/api/users", () => ({
   updateUser: vi.fn(),
   grantBalance: vi.fn(),
   revokeUserSessions: vi.fn(),
+  resetUserPassword: vi.fn(),
+  deleteUser: vi.fn(),
+  batchUsers: vi.fn(),
+  createUser: vi.fn(),
 }));
 
 const mockedListUsers = vi.mocked(usersApi.listUsers);
@@ -33,9 +38,11 @@ const mockedGetUserSubscriptions = vi.mocked(usersApi.getUserSubscriptions);
 const mockedGetUserLedger = vi.mocked(usersApi.getUserLedger);
 
 import { useUsersStore } from "../users";
+import type { AdminUserItem, AdminUserDetail } from "@/api/users";
 
-const FIXED_USER = {
+const FIXED_USER: AdminUserItem = {
   userId: "u_001",
+  email: "alice@example.com",
   displayName: "alice",
   tier: "beta",
   status: "active",
@@ -43,18 +50,18 @@ const FIXED_USER = {
   totalSpent: 0,
   totalRecharged: 0,
   activatedAt: "2026-08-01T00:00:00Z",
-};
-
-const FIXED_DETAIL = {
-  ...FIXED_USER,
-  email: "alice@example.com",
-  frozenBalance: 0,
-  expireAt: null,
+  registeredAt: "2026-08-01T00:00:00Z",
   lastSeenAt: "2026-08-05T00:00:00Z",
   deviceCount: 1,
+  deletedAt: null,
+};
+
+const FIXED_DETAIL: AdminUserDetail = {
+  ...FIXED_USER,
+  frozenBalance: 0,
+  expireAt: null,
   lifetimeGrant: 100,
   lifetimeConsumed: 0,
-  registeredAt: "2026-07-01T00:00:00Z",
 };
 
 describe("useUsersStore", () => {
@@ -88,8 +95,8 @@ describe("useUsersStore", () => {
   });
 
   it("旧响应不会覆盖新筛选结果", async () => {
-    let resolveFirst: ((value: { items: typeof FIXED_USER[]; nextCursor: string | null }) => void) | undefined;
-    const first = new Promise<{ items: typeof FIXED_USER[]; nextCursor: string | null }>((resolve) => {
+    let resolveFirst: ((value: { items: AdminUserItem[]; nextCursor: string | null }) => void) | undefined;
+    const first = new Promise<{ items: AdminUserItem[]; nextCursor: string | null }>((resolve) => {
       resolveFirst = resolve;
     });
     mockedListUsers.mockReturnValueOnce(first).mockResolvedValueOnce({
@@ -113,7 +120,7 @@ describe("useUsersStore", () => {
   it("loadMore 在请求进行中不会重复分页请求", async () => {
     mockedListUsers.mockResolvedValueOnce({ items: [FIXED_USER], nextCursor: "cur_1" });
     await useUsersStore.getState().loadList();
-    const pending = new Promise<{ items: typeof FIXED_USER[]; nextCursor: string | null }>(() => {});
+    const pending = new Promise<{ items: AdminUserItem[]; nextCursor: string | null }>(() => {});
     mockedListUsers.mockReturnValueOnce(pending);
     const firstMore = useUsersStore.getState().loadMore();
     await useUsersStore.getState().loadMore();
@@ -171,8 +178,8 @@ describe("useUsersStore", () => {
   });
 
   it("较早详情请求后返回时不会覆盖较新详情", async () => {
-    let resolveFirst!: (value: typeof FIXED_DETAIL) => void;
-    const firstRequest = new Promise<typeof FIXED_DETAIL>((resolve) => {
+    let resolveFirst!: (value: AdminUserDetail) => void;
+    const firstRequest = new Promise<AdminUserDetail>((resolve) => {
       resolveFirst = resolve;
     });
     mockedGetUserDetail
@@ -189,17 +196,19 @@ describe("useUsersStore", () => {
     expect(cache && cache !== "loading" && cache.detail.balance).toBe(300);
   });
 
-  it("changeTier 成功后 refresh detail", async () => {
+  it("changeProfile 成功后 refresh detail", async () => {
     mockedGetUserDetail.mockResolvedValue(FIXED_DETAIL);
     mockedUpdateUser.mockResolvedValueOnce({
       userId: "u_001",
       tier: "paid",
       status: "active",
+      email: "alice@example.com",
+      displayName: "alice",
     });
     await useUsersStore.getState().ensureDetail("u_001");
-    await useUsersStore.getState().changeTier("u_001", "paid");
-    expect(mockedUpdateUser).toHaveBeenCalledWith("u_001", "paid", undefined);
-    // 至少调用过 2 次(ensureDetail 1 次 + changeTier 后 refresh 1 次)
+    await useUsersStore.getState().changeProfile("u_001", { tier: "paid" });
+    expect(mockedUpdateUser).toHaveBeenCalledWith("u_001", { tier: "paid" });
+    // 至少调用过 2 次(ensureDetail 1 次 + changeProfile 后 refresh 1 次)
     expect(mockedGetUserDetail.mock.calls.length).toBeGreaterThanOrEqual(2);
   });
 

@@ -2,8 +2,12 @@ import { apiRequest } from "./client";
 
 /* -------------------- list / detail -------------------- */
 
+export type UserTier = "free" | "pro" | "team" | "guest" | "trial" | "beta" | "beta_pro" | "paid";
+export type UserStatus = "active" | "paused" | "banned" | "deleted";
+
 export interface AdminUserItem {
   userId: string;
+  email: string | null;
   displayName: string;
   tier: string;
   status: string;
@@ -11,6 +15,10 @@ export interface AdminUserItem {
   totalSpent: number;
   totalRecharged: number;
   activatedAt: string;
+  registeredAt: string | null;
+  lastSeenAt: string | null;
+  deviceCount: number;
+  deletedAt: string | null;
 }
 
 export interface AdminUserListResponse {
@@ -19,16 +27,10 @@ export interface AdminUserListResponse {
 }
 
 export interface AdminUserDetail extends AdminUserItem {
-  email: string | null;
   frozenBalance: number;
   expireAt: string | null;
-  lastSeenAt: string | null;
-  deviceCount: number;
-  /** 累计 lifetime_grant(为前端展示赠送/消费比) */
   lifetimeGrant: number;
   lifetimeConsumed: number;
-  /** 注册时间 */
-  registeredAt: string | null;
 }
 
 export interface ListUsersParams {
@@ -48,6 +50,19 @@ export async function listUsers(
   params: ListUsersParams = {}
 ): Promise<AdminUserListResponse> {
   return apiRequest<AdminUserListResponse>("/v1/admin/users", { query: params });
+}
+
+export async function createUser(input: {
+  email: string;
+  password: string;
+  displayName?: string;
+  tier?: string;
+  status?: string;
+}): Promise<AdminUserDetail> {
+  return apiRequest<AdminUserDetail>("/v1/admin/users", {
+    method: "POST",
+    json: input,
+  });
 }
 
 export async function getUserDetail(userId: string): Promise<AdminUserDetail> {
@@ -86,7 +101,7 @@ export interface AdminUserDevice {
   deviceId: string;
   deviceName: string;
   platform: string;
-  status: "active" | "revoked";
+  status: string;
   lastSeenAt: string;
   createdAt: string;
 }
@@ -116,7 +131,7 @@ export async function revokeUserDevice(
 
 export interface AdminUserLedgerItem {
   ledgerId: string;
-  type: "grant" | "consume" | "refund" | "reserve" | "unreserve" | "adjust";
+  type: string;
   amount: number;
   source: string;
   refId: string | null;
@@ -143,12 +158,16 @@ export async function getUserLedger(
 
 export async function updateUser(
   userId: string,
-  tier: string,
-  status?: string
-): Promise<{ userId: string; tier: string; status: string }> {
+  patch: {
+    tier?: string;
+    status?: string;
+    email?: string;
+    displayName?: string;
+  }
+): Promise<{ userId: string; tier: string | null; status: string | null; email: string | null; displayName: string | null }> {
   return apiRequest(`/v1/admin/users/${encodeURIComponent(userId)}`, {
     method: "PATCH",
-    json: { tier, ...(status ? { status } : {}) },
+    json: patch,
   });
 }
 
@@ -160,6 +179,40 @@ export async function grantBalance(
   return apiRequest(`/v1/admin/users/${encodeURIComponent(userId)}/grant`, {
     method: "POST",
     json: { amount, note },
+  });
+}
+
+export async function resetUserPassword(
+  userId: string
+): Promise<{ userId: string; newPassword: string }> {
+  return apiRequest(`/v1/admin/users/${encodeURIComponent(userId)}/reset-password`, {
+    method: "POST",
+  });
+}
+
+export async function deleteUser(
+  userId: string,
+  confirm: string
+): Promise<{ userId: string; deletedAt: string }> {
+  return apiRequest(
+    `/v1/admin/users/${encodeURIComponent(userId)}?confirm=${encodeURIComponent(confirm)}`,
+    { method: "DELETE" }
+  );
+}
+
+export async function batchUsers(input: {
+  action: "update_status" | "reset_password" | "delete";
+  userIds: string[];
+  status?: string;
+}): Promise<{
+  action: string;
+  successCount: number;
+  failedCount: number;
+  items: Array<Record<string, unknown>>;
+}> {
+  return apiRequest("/v1/admin/users/batch", {
+    method: "POST",
+    json: input,
   });
 }
 

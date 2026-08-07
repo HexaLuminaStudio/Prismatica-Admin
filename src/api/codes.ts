@@ -1,14 +1,14 @@
 import { apiRequest } from "./client";
 
-export type CodeKind = "invite" | "trial" | "recharge";
+/** 礼包码:统一业务身份 = gift(历史 invite/trial/recharge 兼容) */
+export type CodeKind = "gift";
 
 export interface IssueCodesParams {
-  kind: CodeKind;
+  kind?: CodeKind;
   count: number;
   grantedBalance?: number;
   grantedDays?: number;
   tier?: string;
-  amount?: number;
   expireDays?: number;
   /** 备注(可选) */
   note?: string;
@@ -18,7 +18,7 @@ export interface IssuedCodeItem {
   codeHash: string;
   code: string;
   signedPayload: string;
-  codeKind: CodeKind;
+  codeKind: CodeKind | string;
   status: string;
   grantedBalance: number | null;
   grantedDays: number | null;
@@ -37,13 +37,12 @@ export async function issueCodes(
   params: IssueCodesParams
 ): Promise<IssueCodesResponse> {
   const json: Record<string, unknown> = {
-    kind: params.kind,
+    kind: "gift",
     count: params.count,
     grantedBalance: params.grantedBalance ?? 100,
     grantedDays: params.grantedDays ?? 30,
     tier: params.tier ?? "beta",
-    amount: params.amount ?? 0,
-    expireDays: params.expireDays ?? 14,
+    expireDays: params.expireDays ?? 30,
   };
   if (params.note) json.note = params.note;
   return apiRequest<IssueCodesResponse>("/v1/admin/codes", {
@@ -74,7 +73,6 @@ export interface CodeListResponse {
 }
 
 export async function listCodes(params: {
-  kind?: string;
   status?: string;
   limit?: number;
   cursor?: string;

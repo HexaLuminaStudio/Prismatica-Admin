@@ -47,6 +47,7 @@ const FIXED_DETAIL = {
   expireAt: null,
   lastSeenAt: "2026-08-05T00:00:00Z",
   deviceCount: 1,
+  deletedAt: null,
 };
 
 const SUBSCRIPTIONS = [
@@ -139,7 +140,7 @@ describe("UserDetailDrawer", () => {
 
     clickTab("账本");
     await waitFor(() => {
-      expect(screen.getByText("+150")).toBeInTheDocument();
+      expect(screen.getByText("客服补偿")).toBeInTheDocument();
     });
 
     clickTab("基本信息");
@@ -154,7 +155,7 @@ describe("UserDetailDrawer", () => {
       expect(mockedGetUserLedger).toHaveBeenCalledWith("u_001");
     });
     await waitFor(() => {
-      expect(screen.getByText("+150")).toBeInTheDocument();
+      expect(screen.getByText("客服补偿")).toBeInTheDocument();
     });
   });
 
@@ -162,9 +163,14 @@ describe("UserDetailDrawer", () => {
     render(<UserDetailDrawer userId="u_001" onClose={() => {}} />);
     await screen.findByText("会员等级");
 
+    clickTab("余额");
+    await waitFor(() => {
+      expect(mockedGetUserLedger).toHaveBeenCalledTimes(1);
+    });
+
     clickTab("账本");
     await waitFor(() => {
-      expect(screen.getByText("+150")).toBeInTheDocument();
+      expect(screen.getByText("客服补偿")).toBeInTheDocument();
     });
 
     fireEvent.click(screen.getByRole("button", { name: /刷新账本/i }));

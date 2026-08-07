@@ -1,9 +1,11 @@
 /**
- * UserDetailDrawer(2026-08-06 P0-B M3)
+ * UserDetailDrawer(2026-08-07 运营管理增强)
  *
  * 抽屉式用户详情:
- *  - 5 个 tab:基本信息 / 订阅 / 余额(账本) / 设备 / 账单
- *  - 抽屉内操作:强制下线 / 改 tier / 改 status / 手动赠送 / 撤销设备
+ *  - 5 个 tab:基本信息 / 订阅 / 余额 / 设备 / 账本
+ *  - 抽屉内操作:
+ *      - 改 tier / 改 status / 改邮箱 / 改昵称
+ *      - 强制下线 / 手动赠送 / 重置密码(返回一次性明文)/ 软删除
  *  - 写操作走 toast 反馈 + 后端 audit_log
  *
  * 数据由 useUsersStore 提供;不直接调 API。
@@ -21,6 +23,9 @@ import {
   Receipt,
   RefreshCcw,
   ChevronRight,
+  Mail,
+  Trash2,
+  Copy,
 } from "lucide-react";
 import { useUsersStore, type DetailTab } from "@/store/users";
 import {
@@ -33,13 +38,20 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
-import { formatDate, cn } from "@/lib/utils";
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+} from "@/components/ui/card";
+import { formatDate, cn, copyToClipboard } from "@/lib/utils";
 import { userTierLabel, userStatusLabel } from "@/lib/labels";
 import { classifyError } from "@/lib/errorMessages";
 import { toast } from "@/components/Toast";
 
-const TIERS = ["guest", "trial", "beta", "beta_pro", "paid"] as const;
-const STATUSES = ["active", "suspended", "expired"] as const;
+const TIERS = ["free", "pro", "team", "guest", "trial", "beta", "beta_pro", "paid"] as const;
+const STATUSES = ["active", "paused", "banned", "deleted"] as const;
 type Tier = (typeof TIERS)[number];
 type Status = (typeof STATUSES)[number];
 
@@ -58,7 +70,6 @@ interface Props {
 
 export function UserDetailDrawer({ userId, onClose }: Props): React.ReactElement | null {
   const ensureDetail = useUsersStore((s) => s.ensureDetail);
-  const refreshDetail = useUsersStore((s) => s.refreshDetail);
   const loadTab = useUsersStore((s) => s.loadTab);
   const cache = useUsersStore((s) =>
     userId ? s.detailCache[userId] : null
@@ -88,17 +99,12 @@ export function UserDetailDrawer({ userId, onClose }: Props): React.ReactElement
     };
   }, [userId, ensureDetail, loadTab]);
 
-  // 切换 tab 时按需加载
-  const onTabClick = (next: DetailTab) => {
-    setTab(next);
-  };
-
+  // 切换 tab 时按需加载子数据
   React.useEffect(() => {
-    if (userId && tab !== "info") {
-      // "balance" tab 展示余额摘要 + 账本,复用 bills(ledger) 数据加载
-      const loadKey = tab === "balance" ? "bills" : tab;
-      void loadTab(userId, loadKey);
-    }
+    if (!userId || tab === "info") return;
+    const loadKey: Exclude<DetailTab, "info"> =
+      tab === "balance" ? "bills" : tab;
+    void loadTab(userId, loadKey);
   }, [userId, tab, loadTab]);
 
   if (!userId) return null;
@@ -114,7 +120,7 @@ export function UserDetailDrawer({ userId, onClose }: Props): React.ReactElement
       onClick={onClose}
     >
       <div
-        className="flex h-full w-full max-w-[640px] flex-col border-l bg-card shadow-2xl"
+        className="flex h-full w-full max-w-[720px] flex-col border-l bg-card shadow-2xl"
         onClick={(e) => e.stopPropagation()}
       >
         {/* header */}
@@ -134,7 +140,7 @@ export function UserDetailDrawer({ userId, onClose }: Props): React.ReactElement
             <button
               key={t}
               type="button"
-              onClick={() => onTabClick(t)}
+              onClick={() => setTab(t)}
               className={cn(
                 "relative px-3 py-2 text-xs font-medium transition-colors",
                 tab === t
@@ -167,13 +173,12 @@ export function UserDetailDrawer({ userId, onClose }: Props): React.ReactElement
           {detail && cache !== "loading" && (
             <>
               {tab === "info" && (
-                <InfoTab detail={detail} userId={userId} onChanged={onClose} />
+                <InfoTab detail={detail} userId={userId} onClose={onClose} />
               )}
               {tab === "subscription" && (
                 <SubscriptionTab
                   cache={cache}
-                  userId={userId}
-                  onRefresh={() => void loadTab(userId, "subscription")}
+                  onRefresh={() => void loadTab(userId, "subscription", true)}
                 />
               )}
               {tab === "balance" && (
@@ -211,39 +216,59 @@ export function UserDetailDrawer({ userId, onClose }: Props): React.ReactElement
 function InfoTab({
   detail,
   userId,
+  onClose,
 }: {
   detail: AdminUserDetail;
   userId: string;
-  onChanged: () => void;
+  onClose: () => void;
 }): React.ReactElement {
-  const changeTier = useUsersStore((s) => s.changeTier);
+  const changeProfile = useUsersStore((s) => s.changeProfile);
   const grant = useUsersStore((s) => s.grant);
   const revokeSessions = useUsersStore((s) => s.revokeSessions);
+  const resetPassword = useUsersStore((s) => s.resetPassword);
+  const removeUser = useUsersStore((s) => s.removeUser);
 
-  const [tier, setTier] = React.useState<Tier>((detail.tier as Tier) ?? "beta");
+  const [tier, setTier] = React.useState<Tier>((detail.tier as Tier) ?? "free");
   const [status, setStatus] = React.useState<Status | "">(
     (STATUSES as readonly string[]).includes(detail.status)
       ? (detail.status as Status)
       : ""
   );
-  const [busy, setBusy] = React.useState<"" | "tier" | "grant" | "revoke">("");
-
+  const [email, setEmail] = React.useState(detail.email ?? "");
+  const [displayName, setDisplayName] = React.useState(detail.displayName ?? "");
+  const [busy, setBusy] = React.useState<
+    "" | "profile" | "grant" | "revoke" | "reset" | "delete"
+  >("");
   const [grantOpen, setGrantOpen] = React.useState(false);
+  const [resetResult, setResetResult] = React.useState<string | null>(null);
 
   React.useEffect(() => {
-    setTier((detail.tier as Tier) ?? "beta");
+    setTier((detail.tier as Tier) ?? "free");
     setStatus(
       (STATUSES as readonly string[]).includes(detail.status)
         ? (detail.status as Status)
         : ""
     );
-  }, [detail.tier, detail.status]);
+    setEmail(detail.email ?? "");
+    setDisplayName(detail.displayName ?? "");
+  }, [detail.tier, detail.status, detail.email, detail.displayName]);
 
-  const onSaveTier = async () => {
-    setBusy("tier");
+  const dirty =
+    tier !== detail.tier ||
+    (status !== "" && status !== detail.status) ||
+    email !== (detail.email ?? "") ||
+    displayName !== (detail.displayName ?? "");
+
+  const onSaveProfile = async () => {
+    setBusy("profile");
     try {
-      await changeTier(userId, tier, status || undefined);
-      toast({ kind: "success", title: "已更新会员信息" });
+      await changeProfile(userId, {
+        tier,
+        status: status || undefined,
+        email: email.trim() || undefined,
+        displayName: displayName.trim() || undefined,
+      });
+      toast({ kind: "success", title: "已更新用户资料" });
     } catch (e) {
       const msg = classifyError(e);
       toast({ kind: "error", title: msg.title, description: msg.description });
@@ -267,6 +292,49 @@ function InfoTab({
         title: "强制下线成功",
         description: `已撤销 ${r.revokedCount} 个 session`,
       });
+    } catch (e) {
+      const msg = classifyError(e);
+      toast({ kind: "error", title: msg.title, description: msg.description });
+    } finally {
+      setBusy("");
+    }
+  };
+
+  const onResetPassword = async () => {
+    if (
+      !window.confirm(
+        `确定重置该用户(${userId.slice(0, 8)}…)的密码?所有 session 会被撤销,新密码仅展示一次。`
+      )
+    )
+      return;
+    setBusy("reset");
+    try {
+      const r = await resetPassword(userId);
+      setResetResult(r.newPassword);
+      toast({
+        kind: "success",
+        title: "密码已重置",
+        description: "新密码仅在此抽屉中显示一次,请立刻保存或告知用户。",
+      });
+    } catch (e) {
+      const msg = classifyError(e);
+      toast({ kind: "error", title: msg.title, description: msg.description });
+    } finally {
+      setBusy("");
+    }
+  };
+
+  const onDelete = async () => {
+    const confirmText = window.prompt(
+      `确定软删除该用户(${userId.slice(0, 8)}…)?\n将撤销该用户所有会话并禁用设备。\n请输入 userId(${userId})以确认:`,
+      ""
+    );
+    if (confirmText !== userId) return;
+    setBusy("delete");
+    try {
+      await removeUser(userId);
+      toast({ kind: "success", title: "用户已软删除" });
+      onClose();
     } catch (e) {
       const msg = classifyError(e);
       toast({ kind: "error", title: msg.title, description: msg.description });
@@ -333,12 +401,32 @@ function InfoTab({
         <SummaryItem label="最近活跃" value={formatDate(detail.lastSeenAt)} />
       </div>
 
-      {/* 操作区:改 tier */}
+      {/* 操作区:基础资料 */}
       <section className="space-y-3 rounded-md border p-4">
         <div className="flex items-center gap-2 text-sm font-medium">
-          <KeyRound className="h-4 w-4" />
-          改 tier / status
+          <Mail className="h-4 w-4" />
+          基础资料
         </div>
+        <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
+          <div className="space-y-1">
+            <Label className="text-xs">邮箱</Label>
+            <Input
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+              disabled={busy !== ""}
+              type="email"
+            />
+          </div>
+          <div className="space-y-1">
+            <Label className="text-xs">显示名</Label>
+            <Input
+              value={displayName}
+              onChange={(e) => setDisplayName(e.target.value)}
+              disabled={busy !== ""}
+            />
+          </div>
+        </div>
+
         <div className="space-y-2">
           <div className="text-xs text-muted-foreground">会员等级</div>
           <div className="flex flex-wrap gap-2">
@@ -380,19 +468,23 @@ function InfoTab({
           </div>
         </div>
         <div className="flex justify-end pt-2">
-          <Button size="sm" disabled={busy !== ""} onClick={() => void onSaveTier()}>
-            {busy === "tier" ? (
+          <Button
+            size="sm"
+            disabled={busy !== "" || !dirty}
+            onClick={() => void onSaveProfile()}
+          >
+            {busy === "profile" ? (
               <Loader2 className="mr-1 h-4 w-4 animate-spin" />
             ) : null}
-            保存
+            保存资料
           </Button>
         </div>
       </section>
 
-      {/* 操作区:赠送 / 强制下线 */}
+      {/* 操作区:安全 / 账户管理 */}
       <section className="space-y-3 rounded-md border p-4">
         <div className="flex items-center gap-2 text-sm font-medium">
-          <Power className="h-4 w-4" />
+          <KeyRound className="h-4 w-4" />
           快捷操作
         </div>
         <div className="flex flex-wrap gap-2">
@@ -414,11 +506,58 @@ function InfoTab({
             {busy === "revoke" ? (
               <Loader2 className="mr-1 h-4 w-4 animate-spin" />
             ) : (
-              <KeyRound className="mr-1 h-4 w-4" />
+              <Power className="mr-1 h-4 w-4" />
             )}
             强制下线
           </Button>
+          <Button
+            size="sm"
+            variant="outline"
+            disabled={busy !== ""}
+            onClick={() => void onResetPassword()}
+          >
+            {busy === "reset" ? (
+              <Loader2 className="mr-1 h-4 w-4 animate-spin" />
+            ) : (
+              <KeyRound className="mr-1 h-4 w-4" />
+            )}
+            重置密码
+          </Button>
+          <Button
+            size="sm"
+            variant="destructive"
+            disabled={busy !== ""}
+            onClick={() => void onDelete()}
+          >
+            {busy === "delete" ? (
+              <Loader2 className="mr-1 h-4 w-4 animate-spin" />
+            ) : (
+              <Trash2 className="mr-1 h-4 w-4" />
+            )}
+            软删除
+          </Button>
         </div>
+
+        {resetResult && (
+          <div className="rounded-md border border-amber-500/40 bg-amber-500/10 p-3 text-xs">
+            <div className="font-medium text-amber-700 dark:text-amber-300">
+              新密码(仅展示一次):
+            </div>
+            <div className="mt-1 flex items-center gap-2">
+              <code className="rounded bg-background px-2 py-1 font-mono">
+                {resetResult}
+              </code>
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={() => void copyToClipboard(resetResult)}
+              >
+                <Copy className="mr-1 h-3 w-3" />
+                复制
+              </Button>
+            </div>
+          </div>
+        )}
       </section>
 
       {grantOpen && (
@@ -450,11 +589,9 @@ function SummaryItem({
 
 function SubscriptionTab({
   cache,
-  userId,
   onRefresh,
 }: {
   cache: ReturnType<typeof useUsersStore.getState>["detailCache"][string];
-  userId: string;
   onRefresh: () => void;
 }): React.ReactElement {
   if (!cache || cache === "loading") return <></>;
@@ -520,12 +657,11 @@ function SubscriptionTab({
 function BalanceTab({
   cache,
   detail,
-  userId,
   onRefresh,
 }: {
   cache: ReturnType<typeof useUsersStore.getState>["detailCache"][string];
-  detail: AdminUserDetail;
   userId: string;
+  detail: AdminUserDetail;
   onRefresh: () => void;
 }): React.ReactElement {
   if (!cache || cache === "loading") return <></>;

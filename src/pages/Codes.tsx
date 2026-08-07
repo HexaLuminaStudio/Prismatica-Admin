@@ -1,12 +1,15 @@
 /**
- * 凭证签发页(2026-08-06 P0-B M4 重构)
+ * 礼包码管理页(2026-08-07 运营管理增强)
+ *
+ * 业务调整:
+ *  - 新流程只保留「礼包码」一种凭证类型(gift);邀请码/体验码/充值码统一归并。
+ *  - 状态文案统一由前端映射:exhausted → 已使用,active → 有效,revoked → 已撤销,expired → 已过期。
  *
  * 功能:
- *  - 批量签发向导(kind / count / expireDays / note + 模板参数)
- *  - 签发成功 → 明文码弹窗(可逐条复制 / 一键下载 TXT)
- *  - 列表 + 筛选(kind / status)+ 分页 + 撤销
- *  - 单码查询(lookup)
- *  - CSV 导出(带筛选)
+ *  - 批量签发向导(数量 / 有效期 / 赠送余额 / 天数 / 等级 / 备注)
+ *  - 列表筛选(status)+ 分页 + 撤销 + 查码
+ *  - 签发成功后弹明文(一次性展示 + 复制 / 下载 TXT)
+ *  - CSV 导出(带当前筛选)
  *
  * 数据由 useCodesStore 提供。
  */
@@ -27,7 +30,6 @@ import {
   FileText,
 } from "lucide-react";
 import {
-  CodeKind,
   IssuedCodeItem,
   CodeLookupResponse,
 } from "@/api/codes";
@@ -51,11 +53,7 @@ import {
   downloadCsv,
   downloadTextFile,
 } from "@/lib/utils";
-import {
-  kindLabel,
-  kindDesc,
-  codeStatusLabel,
-} from "@/lib/labels";
+import { kindLabel, codeStatusLabel } from "@/lib/labels";
 import { classifyError } from "@/lib/errorMessages";
 import { toast } from "@/components/Toast";
 
@@ -64,22 +62,15 @@ const STATUS_BADGE: Record<
   "default" | "destructive" | "secondary" | "outline"
 > = {
   active: "default",
-  consumed: "secondary",
+  exhausted: "secondary",
   revoked: "destructive",
   expired: "outline",
 };
 
-const KIND_OPTIONS = [
-  { value: "", label: "全部" },
-  { value: "invite", label: "邀请码" },
-  { value: "trial", label: "体验码" },
-  { value: "recharge", label: "充值码" },
-] as const;
-
 const STATUS_OPTIONS = [
   { value: "", label: "全部" },
   { value: "active", label: "有效" },
-  { value: "consumed", label: "已使用" },
+  { value: "exhausted", label: "已使用" },
   { value: "revoked", label: "已撤销" },
   { value: "expired", label: "已过期" },
 ] as const;
@@ -109,7 +100,6 @@ export function CodesPage(): React.ReactElement {
     setExporting(true);
     try {
       const q = new URLSearchParams();
-      if (filters.kind) q.set("kind", filters.kind);
       if (filters.status) q.set("status", filters.status);
       const qs = q.toString();
       await downloadCsv(
@@ -126,12 +116,12 @@ export function CodesPage(): React.ReactElement {
   };
 
   const onRevoke = async (codeHash: string) => {
-    if (!window.confirm(`确定撤销凭证 ${codeHash.slice(0, 12)}…?`)) return;
+    if (!window.confirm(`确定撤销礼包码 ${codeHash.slice(0, 12)}…?`)) return;
     try {
       const r = await revoke(codeHash);
       toast({
         kind: "success",
-        title: "凭证已撤销",
+        title: "礼包码已撤销",
         description: `status=${r.status}`,
       });
     } catch (e) {
@@ -147,10 +137,10 @@ export function CodesPage(): React.ReactElement {
           <div>
             <CardTitle className="flex items-center gap-2">
               <Ticket className="h-4 w-4" />
-              凭证签发
+              礼包码
             </CardTitle>
             <CardDescription>
-              INV / TRY / RCH 批量签发与查询
+              统一凭证:用户登录后通过礼包码充值 / 开通会员
             </CardDescription>
           </div>
           <div className="flex items-center gap-2">
@@ -184,21 +174,7 @@ export function CodesPage(): React.ReactElement {
         <CardContent>
           {/* 筛选条 */}
           <div className="mb-3 flex flex-wrap items-center gap-2 text-xs">
-            <span className="text-muted-foreground">类型:</span>
-            {KIND_OPTIONS.map((o) => (
-              <Button
-                key={o.value || "all"}
-                size="sm"
-                variant={filters.kind === o.value ? "default" : "outline"}
-                onClick={() =>
-                  setFilters({ kind: o.value as "" | CodeKind })
-                }
-                className="h-7"
-              >
-                {o.label}
-              </Button>
-            ))}
-            <span className="ml-4 text-muted-foreground">状态:</span>
+            <span className="text-muted-foreground">状态:</span>
             {STATUS_OPTIONS.map((o) => (
               <Button
                 key={o.value || "all-s"}
@@ -209,7 +185,7 @@ export function CodesPage(): React.ReactElement {
                     status: o.value as
                       | ""
                       | "active"
-                      | "consumed"
+                      | "exhausted"
                       | "revoked"
                       | "expired",
                   })
@@ -244,8 +220,8 @@ export function CodesPage(): React.ReactElement {
               <thead>
                 <tr className="border-b text-xs uppercase text-muted-foreground">
                   <th className="py-2 text-left font-medium">codeHash</th>
-                  <th className="py-2 text-left font-medium">kind</th>
-                  <th className="py-2 text-left font-medium">status</th>
+                  <th className="py-2 text-left font-medium">类型</th>
+                  <th className="py-2 text-left font-medium">状态</th>
                   <th className="py-2 text-left font-medium">面值</th>
                   <th className="py-2 text-left font-medium">签发人</th>
                   <th className="py-2 text-left font-medium">签发时间</th>
@@ -260,7 +236,7 @@ export function CodesPage(): React.ReactElement {
                       colSpan={8}
                       className="py-12 text-center text-muted-foreground"
                     >
-                      暂无凭证
+                      暂无礼包码
                     </td>
                   </tr>
                 )}
@@ -278,9 +254,7 @@ export function CodesPage(): React.ReactElement {
                       </Badge>
                     </td>
                     <td className="py-2 text-xs">
-                      {c.codeKind === "recharge"
-                        ? `+${c.amount ?? 0}`
-                        : `赠 ${c.grantedBalance ?? 0} / ${c.grantedDays ?? 0}d`}
+                      赠 {c.grantedBalance ?? 0} / {c.grantedDays ?? 0}d
                     </td>
                     <td className="py-2 text-xs">{c.issuedBy}</td>
                     <td className="py-2 text-xs">{formatDate(c.issuedAt)}</td>
@@ -359,8 +333,6 @@ function IssueDialog({ onClose }: { onClose: () => void }): React.ReactElement {
   const [busy, setBusy] = React.useState(false);
   const [err, setErr] = React.useState<string | null>(null);
 
-  const isRecharge = draft.kind === "recharge";
-
   const set = <K extends keyof CodesWizardDraft>(
     key: K,
     value: CodesWizardDraft[K]
@@ -380,34 +352,23 @@ function IssueDialog({ onClose }: { onClose: () => void }): React.ReactElement {
       setErr("有效期必须 ≥ 1 天");
       return;
     }
-    if (isRecharge) {
-      if (
-        !Number.isInteger(draft.amount) ||
-        draft.amount < 1 ||
-        draft.amount > 100000
-      ) {
-        setErr("充值金额必须是 1~100000 之间的整数");
-        return;
-      }
-    } else {
-      if (
-        !Number.isInteger(draft.grantedBalance) ||
-        draft.grantedBalance < 0
-      ) {
-        setErr("赠送余额必须是非负整数");
-        return;
-      }
-      if (
-        !Number.isInteger(draft.grantedDays) ||
-        draft.grantedDays < 1
-      ) {
-        setErr("赠送天数必须是 ≥ 1 的整数");
-        return;
-      }
-      if (!draft.tier.trim()) {
-        setErr("会员等级不能为空");
-        return;
-      }
+    if (
+      !Number.isInteger(draft.grantedBalance) ||
+      draft.grantedBalance < 0
+    ) {
+      setErr("赠送余额必须是非负整数");
+      return;
+    }
+    if (
+      !Number.isInteger(draft.grantedDays) ||
+      draft.grantedDays < 1
+    ) {
+      setErr("赠送天数必须是 ≥ 1 的整数");
+      return;
+    }
+    if (!draft.tier.trim()) {
+      setErr("会员等级不能为空");
+      return;
     }
 
     setBusy(true);
@@ -416,7 +377,7 @@ function IssueDialog({ onClose }: { onClose: () => void }): React.ReactElement {
       toast({
         kind: "success",
         title: "签发成功",
-        description: `共 ${items.length} 个「${kindLabel(draft.kind)}」`,
+        description: `共 ${items.length} 个礼包码`,
       });
       onClose();
     } catch (e2) {
@@ -429,26 +390,13 @@ function IssueDialog({ onClose }: { onClose: () => void }): React.ReactElement {
   };
 
   return (
-    <Modal title="批量签发凭证" onClose={onClose}>
+    <Modal title="批量签发礼包码" onClose={onClose}>
       <form onSubmit={onSubmit} className="space-y-3">
         <div className="space-y-1">
           <Label>凭证类型</Label>
-          <div className="grid grid-cols-1 gap-2 md:grid-cols-3">
-            {(["invite", "trial", "recharge"] as CodeKind[]).map((k) => (
-              <Button
-                key={k}
-                type="button"
-                size="sm"
-                variant={draft.kind === k ? "default" : "outline"}
-                onClick={() => set("kind", k)}
-                disabled={busy}
-              >
-                {draft.kind === k ? <Check className="mr-1 h-3 w-3" /> : null}
-                {kindLabel(k)}
-              </Button>
-            ))}
+          <div className="rounded-md border bg-muted/20 px-3 py-2 text-xs text-muted-foreground">
+            当前统一为「礼包码」(用户登录后兑换即可充值 + 开通会员)
           </div>
-          <p className="text-xs text-muted-foreground">{kindDesc(draft.kind)}</p>
         </div>
 
         <div className="grid grid-cols-2 gap-3">
@@ -477,55 +425,41 @@ function IssueDialog({ onClose }: { onClose: () => void }): React.ReactElement {
           </div>
         </div>
 
-        {isRecharge ? (
+        <div className="grid grid-cols-3 gap-3">
           <div className="space-y-1">
-            <Label htmlFor="amount">充值金额</Label>
+            <Label htmlFor="balance">赠送余额</Label>
             <Input
-              id="amount"
+              id="balance"
               type="number"
-              min={1}
-              value={String(draft.amount)}
-              onChange={(e) => set("amount", Number(e.target.value))}
+              min={0}
+              value={String(draft.grantedBalance)}
+              onChange={(e) =>
+                set("grantedBalance", Number(e.target.value))
+              }
               disabled={busy}
             />
           </div>
-        ) : (
-          <div className="grid grid-cols-3 gap-3">
-            <div className="space-y-1">
-              <Label htmlFor="balance">赠送余额</Label>
-              <Input
-                id="balance"
-                type="number"
-                min={0}
-                value={String(draft.grantedBalance)}
-                onChange={(e) =>
-                  set("grantedBalance", Number(e.target.value))
-                }
-                disabled={busy}
-              />
-            </div>
-            <div className="space-y-1">
-              <Label htmlFor="days">赠送天数</Label>
-              <Input
-                id="days"
-                type="number"
-                min={1}
-                value={String(draft.grantedDays)}
-                onChange={(e) => set("grantedDays", Number(e.target.value))}
-                disabled={busy}
-              />
-            </div>
-            <div className="space-y-1">
-              <Label htmlFor="tier">会员等级</Label>
-              <Input
-                id="tier"
-                value={draft.tier}
-                onChange={(e) => set("tier", e.target.value)}
-                disabled={busy}
-              />
-            </div>
+          <div className="space-y-1">
+            <Label htmlFor="days">赠送天数</Label>
+            <Input
+              id="days"
+              type="number"
+              min={1}
+              value={String(draft.grantedDays)}
+              onChange={(e) => set("grantedDays", Number(e.target.value))}
+              disabled={busy}
+            />
           </div>
-        )}
+          <div className="space-y-1">
+            <Label htmlFor="tier">会员等级</Label>
+            <Input
+              id="tier"
+              value={draft.tier}
+              onChange={(e) => set("tier", e.target.value)}
+              disabled={busy}
+            />
+          </div>
+        </div>
 
         <div className="space-y-1">
           <Label htmlFor="note">备注(可选)</Label>
@@ -583,7 +517,7 @@ function IssuedResultDialog({
 
   const onDownloadTxt = () => {
     const lines = items.map((it) => it.code).join("\n");
-    downloadTextFile(lines + "\n", `codes-${new Date().toISOString().slice(0, 10)}.txt`);
+    downloadTextFile(lines + "\n", `gift-codes-${new Date().toISOString().slice(0, 10)}.txt`);
     toast({ kind: "success", title: "TXT 文件已下载" });
   };
 
@@ -679,7 +613,7 @@ function LookupDialog({ onClose }: { onClose: () => void }): React.ReactElement 
             id="lookup"
             value={code}
             onChange={(e) => setCode(e.target.value)}
-            placeholder="INV-XXXX-XXXX-XXXX-XXXX"
+            placeholder="PKG-XXXX-XXXX-XXXX-XXXX"
             disabled={busy}
           />
         </div>
@@ -691,11 +625,11 @@ function LookupDialog({ onClose }: { onClose: () => void }): React.ReactElement 
               <span className="font-mono">{result.codeHash}</span>
             </div>
             <div>
-              <span className="text-muted-foreground">codeKind: </span>
+              <span className="text-muted-foreground">类型: </span>
               <Badge variant="outline">{kindLabel(result.codeKind)}</Badge>
             </div>
             <div>
-              <span className="text-muted-foreground">status: </span>
+              <span className="text-muted-foreground">状态: </span>
               <Badge variant={STATUS_BADGE[result.status] ?? "outline"}>
                 {codeStatusLabel(result.status)}
               </Badge>
@@ -712,12 +646,6 @@ function LookupDialog({ onClose }: { onClose: () => void }): React.ReactElement 
                 <span className="font-mono">
                   {maskCodeTail(result.consumedByUserId, 8, 4)}
                 </span>
-              </div>
-            )}
-            {result.rechargeAmount != null && (
-              <div>
-                <span className="text-muted-foreground">rechargeAmount: </span>
-                {result.rechargeAmount}
               </div>
             )}
           </div>

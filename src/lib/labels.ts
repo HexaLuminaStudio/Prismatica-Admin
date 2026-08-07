@@ -13,23 +13,26 @@
 /* ---------------- 凭证类型(kind) ---------------- */
 
 export const KIND_LABEL: Record<string, string> = {
+  gift: "礼包码",
+  pkg: "礼包码",
+  PKG: "礼包码",
   invite: "邀请码",
   trial: "体验码",
   recharge: "充值码",
 };
 
 export const KIND_DESC: Record<string, string> = {
-  invite: "注册时赠送余额 + 会员等级 + 天数",
-  trial: "短期体验权限",
-  recharge: "直接为账号充值余额",
+  gift: "用户登录后通过礼包码兑换,即可充值余额 + 开通会员",
+  pkg: "用户登录后通过礼包码兑换,即可充值余额 + 开通会员",
+  PKG: "用户登录后通过礼包码兑换,即可充值余额 + 开通会员",
 };
 
 export function kindLabel(kind: string): string {
-  return KIND_LABEL[kind] ?? kind;
+  return KIND_LABEL[kind] ?? "礼包码";
 }
 
 export function kindDesc(kind: string): string {
-  return KIND_DESC[kind] ?? "";
+  return KIND_DESC[kind] ?? KIND_DESC.gift;
 }
 
 /* ---------------- 凭证状态 ---------------- */
@@ -37,6 +40,7 @@ export function kindDesc(kind: string): string {
 export const CODE_STATUS_LABEL: Record<string, string> = {
   active: "有效",
   consumed: "已使用",
+  exhausted: "已使用",
   revoked: "已撤销",
   expired: "已过期",
 };

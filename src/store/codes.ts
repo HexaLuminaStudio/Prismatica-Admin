@@ -1,9 +1,9 @@
 /**
- * Codes store(zustand,2026-08-06 P0-B M1)
+ * Codes store(zustand,2026-08-07 运营管理增强)
  *
  * 职责:
- *  - 列表分页 + 筛选(kind / status)
- *  - 签发向导状态机(kind / count / expireDays / note / 模板参数)
+ *  - 列表分页 + 筛选(status)
+ *  - 签发向导:仅「礼包码」一种类型(gift)
  *  - 最近一批签发的明文 codes(用于下载 TXT / 复制)
  */
 
@@ -21,35 +21,28 @@ import {
 } from "@/api/codes";
 
 export interface CodesFilters {
-  kind: "" | CodeKind;
-  status: "" | "active" | "consumed" | "revoked" | "expired";
+  status: "" | "active" | "exhausted" | "revoked" | "expired";
 }
 
-export const EMPTY_CODES_FILTERS: CodesFilters = { kind: "", status: "" };
+export const EMPTY_CODES_FILTERS: CodesFilters = { status: "" };
 
 /** 向导草稿(serialize 友好,便于将来持久化) */
 export interface CodesWizardDraft {
-  kind: CodeKind;
   count: number;
   expireDays: number;
   note: string;
-  /** 模板参数(invite/trial 用) */
   grantedBalance: number;
   grantedDays: number;
   tier: string;
-  /** 模板参数(recharge 用) */
-  amount: number;
 }
 
 export const DEFAULT_CODES_WIZARD: CodesWizardDraft = {
-  kind: "invite",
   count: 10,
-  expireDays: 365,
+  expireDays: 30,
   note: "",
   grantedBalance: 100,
   grantedDays: 30,
   tier: "beta",
-  amount: 50,
 };
 
 export interface CodesState {
@@ -105,7 +98,6 @@ export const useCodesStore = create<CodesState>((set, get) => ({
     try {
       const resp = await listCodes({
         limit: 50,
-        ...(requestFilters.kind ? { kind: requestFilters.kind } : {}),
         ...(requestFilters.status ? { status: requestFilters.status } : {}),
         ...(opts.cursor ? { cursor: opts.cursor } : {}),
       });
@@ -131,21 +123,16 @@ export const useCodesStore = create<CodesState>((set, get) => ({
 
   async issue(draft) {
     const params: IssueCodesParams = {
-      kind: draft.kind,
+      kind: "gift",
       count: draft.count,
       expireDays: draft.expireDays,
+      grantedBalance: draft.grantedBalance,
+      grantedDays: draft.grantedDays,
+      tier: draft.tier,
       ...(draft.note ? { note: draft.note } : {}),
-      ...(draft.kind === "recharge"
-        ? { amount: draft.amount }
-        : {
-            grantedBalance: draft.grantedBalance,
-            grantedDays: draft.grantedDays,
-            tier: draft.tier,
-          }),
     };
     const resp = await issueCodes(params);
     set({ lastIssuedBatch: resp.items });
-    // 重新拉列表(最新签发的应该置顶)
     try {
       await get().loadList({ reset: true });
     } catch {

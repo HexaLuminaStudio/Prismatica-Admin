@@ -63,6 +63,10 @@ const MESSAGE_MAP: Record<string, ErrorMessage> = {
     title: "会员等级无效",
     description: "所选等级不被系统支持,请选择正确的等级。",
   },
+  WEAK_PASSWORD: {
+    title: "密码强度不足",
+    description: "密码至少 10 位,且必须同时包含字母和数字。",
+  },
 
   // --- 计费 ---
   INSUFFICIENT_BALANCE: {

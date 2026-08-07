@@ -1,10 +1,10 @@
 /**
- * codes store 单测(2026-08-06 P0-B M7)
+ * codes store 单测(2026-08-07 运营管理增强)
  */
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import * as codesApi from "@/api/codes";
-import type { CodeListItem } from "@/api/codes";
+import type { CodeListItem, IssuedCodeItem } from "@/api/codes";
 
 vi.mock("@/api/codes", () => ({
   listCodes: vi.fn(),
@@ -20,11 +20,11 @@ const mockedLookupCode = vi.mocked(codesApi.lookupCode);
 
 import { useCodesStore, DEFAULT_CODES_WIZARD } from "../codes";
 
-const SAMPLE_CODE = {
+const SAMPLE_CODE: IssuedCodeItem = {
   codeHash: "h_1",
-  code: "INV-AAAA-BBBB-CCCC-DDDD",
+  code: "PKG-AAAA-BBBB-CCCC-DDDD",
   signedPayload: "sig",
-  codeKind: "invite" as const,
+  codeKind: "gift",
   status: "active",
   grantedBalance: 100,
   grantedDays: 30,
@@ -34,6 +34,25 @@ const SAMPLE_CODE = {
   issuedAt: "2026-08-01T00:00:00Z",
   expireAt: "2027-08-01T00:00:00Z",
 };
+
+function makeItem(overrides: Partial<CodeListItem> = {}): CodeListItem {
+  return {
+    codeHash: "h_1",
+    codeKind: "gift",
+    status: "active",
+    grantedBalance: 100,
+    grantedDays: 30,
+    tier: "beta",
+    amount: 0,
+    issuedBy: "root",
+    issuedAt: "2026-08-01T00:00:00Z",
+    expireAt: "2027-08-01T00:00:00Z",
+    consumedAt: null,
+    consumedByUserId: null,
+    consumedIp: null,
+    ...overrides,
+  };
+}
 
 describe("useCodesStore", () => {
   beforeEach(() => {
@@ -50,43 +69,15 @@ describe("useCodesStore", () => {
       resolveFirst = resolve;
     });
     mockedListCodes.mockReturnValueOnce(first).mockResolvedValueOnce({
-      items: [{
-        codeHash: "h_new",
-        codeKind: "invite",
-        status: "active",
-        grantedBalance: 100,
-        grantedDays: 30,
-        tier: "beta",
-        amount: 0,
-        issuedBy: "root",
-        issuedAt: "2026-08-01T00:00:00Z",
-        expireAt: "2027-08-01T00:00:00Z",
-        consumedAt: null,
-        consumedByUserId: null,
-        consumedIp: null,
-      }],
+      items: [makeItem({ codeHash: "h_new" })],
       nextCursor: null,
     });
-    useCodesStore.getState().setFilters({ kind: "invite" });
+    useCodesStore.getState().setFilters({ status: "active" });
     const firstRequest = useCodesStore.getState().loadList();
     useCodesStore.getState().setFilters({ status: "revoked" });
     const secondRequest = useCodesStore.getState().loadList();
     await secondRequest;
-    resolveFirst?.({ items: [{
-      codeHash: "h_old",
-      codeKind: "invite",
-      status: "active",
-      grantedBalance: 100,
-      grantedDays: 30,
-      tier: "beta",
-      amount: 0,
-      issuedBy: "root",
-      issuedAt: "2026-08-01T00:00:00Z",
-      expireAt: "2027-08-01T00:00:00Z",
-      consumedAt: null,
-      consumedByUserId: null,
-      consumedIp: null,
-    }], nextCursor: "old" });
+    resolveFirst?.({ items: [makeItem({ codeHash: "h_old" })], nextCursor: "old" });
     await firstRequest;
     expect(useCodesStore.getState().items[0].codeHash).toBe("h_new");
     expect(mockedListCodes).toHaveBeenNthCalledWith(2, expect.objectContaining({ status: "revoked" }));
@@ -94,37 +85,20 @@ describe("useCodesStore", () => {
 
   it("显式筛选快照用于列表请求", async () => {
     mockedListCodes.mockResolvedValueOnce({ items: [], nextCursor: null });
-    useCodesStore.getState().setFilters({ kind: "invite", status: "active" });
-    await useCodesStore.getState().loadList({ filters: { kind: "", status: "" } });
+    useCodesStore.getState().setFilters({ status: "active" });
+    await useCodesStore.getState().loadList({ filters: { status: "" } });
     expect(mockedListCodes).toHaveBeenCalledWith({ limit: 50 });
   });
 
   it("issue 保存明文批次 + 自动 reload 列表", async () => {
     mockedIssueCodes.mockResolvedValueOnce({ items: [SAMPLE_CODE] });
     mockedListCodes.mockResolvedValueOnce({
-      items: [
-        {
-          codeHash: "h_1",
-          codeKind: "invite",
-          status: "active",
-          grantedBalance: 100,
-          grantedDays: 30,
-          tier: "beta",
-          amount: 0,
-          issuedBy: "root",
-          issuedAt: "2026-08-01T00:00:00Z",
-          expireAt: "2027-08-01T00:00:00Z",
-          consumedAt: null,
-          consumedByUserId: null,
-          consumedIp: null,
-        },
-      ],
+      items: [makeItem({ codeHash: "h_1" })],
       nextCursor: null,
     });
 
     const items = await useCodesStore.getState().issue({
       ...DEFAULT_CODES_WIZARD,
-      kind: "invite",
       count: 1,
     });
 
@@ -148,24 +122,24 @@ describe("useCodesStore", () => {
 
   it("lookup 透传结果", async () => {
     mockedLookupCode.mockResolvedValueOnce({
-      codeKind: "invite",
+      codeKind: "gift",
       codeHash: "h_1",
       status: "active",
       consumedAt: null,
       consumedByUserId: null,
       rechargeAmount: null,
     });
-    const r = await useCodesStore.getState().lookup("INV-XXXX");
+    const r = await useCodesStore.getState().lookup("PKG-XXXX");
     expect(r.codeHash).toBe("h_1");
   });
 
-  it("loadList(reset=true) 替换;setFilters 合并", async () => {
-    useCodesStore.getState().setFilters({ kind: "invite" });
-    expect(useCodesStore.getState().filters.kind).toBe("invite");
+  it("setFilters 合并;loadList 携带 status", async () => {
+    useCodesStore.getState().setFilters({ status: "active" });
+    expect(useCodesStore.getState().filters.status).toBe("active");
     mockedListCodes.mockResolvedValueOnce({ items: [], nextCursor: null });
     await useCodesStore.getState().loadList();
     expect(mockedListCodes).toHaveBeenCalledWith(
-      expect.objectContaining({ kind: "invite", limit: 50 })
+      expect.objectContaining({ status: "active", limit: 50 })
     );
   });
 
