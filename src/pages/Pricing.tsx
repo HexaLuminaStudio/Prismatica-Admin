@@ -108,7 +108,7 @@ export function PricingPage(): React.ReactElement {
               定价中心
             </CardTitle>
             <CardDescription className="mt-1 leading-6">
-              管理语料分析导出的公共固定价，以及平台 AI 的输入、输出 Token 单价。发布后仅影响新请求，进行中账单继续使用原价格快照。
+              管理语料分析导出的公共固定价、语料下载与 HSK 作文导出的按量单价，以及平台 AI 的输入、输出 Token 单价。发布后仅影响新请求，进行中账单继续使用原价格快照。
             </CardDescription>
           </div>
           <div className="flex flex-wrap items-center gap-2">
@@ -150,19 +150,17 @@ export function PricingPage(): React.ReactElement {
             </div>
           ) : (
             <div className="overflow-hidden rounded-lg border">
-              <div className="hidden grid-cols-[minmax(180px,1.3fr)_110px_repeat(4,minmax(105px,1fr))_90px] gap-3 border-b bg-muted/30 px-4 py-2 text-xs font-medium text-muted-foreground lg:grid">
-                <span>收费功能</span><span>模式</span><span>固定价</span><span>输入 / 千 Token</span><span>输出 / 千 Token</span><span>最低 / 最高</span><span>状态</span>
+              <div className="hidden grid-cols-[minmax(200px,1.3fr)_110px_minmax(260px,1.5fr)_220px_90px] gap-3 border-b bg-muted/30 px-4 py-2 text-xs font-medium text-muted-foreground lg:grid">
+                <span>收费功能</span><span>模式</span><span>单价</span><span>最低 / 最高</span><span>状态</span>
               </div>
               {rules.map((rule) => (
-                <div key={rule.featureCode} className="grid gap-3 border-b px-4 py-4 last:border-b-0 lg:grid-cols-[minmax(180px,1.3fr)_110px_repeat(4,minmax(105px,1fr))_90px] lg:items-center">
+                <div key={rule.featureCode} className="grid gap-3 border-b px-4 py-4 last:border-b-0 lg:grid-cols-[minmax(200px,1.3fr)_110px_minmax(260px,1.5fr)_220px_90px] lg:items-center">
                   <div>
                     <div className="text-sm font-medium">{rule.displayName}</div>
                     <div className="mt-0.5 font-mono text-xs text-muted-foreground">{rule.featureCode}</div>
                   </div>
                   <Badge variant="secondary" className="w-fit">{MODE_LABEL[rule.billingMode]}</Badge>
-                  <PriceInput label="固定价" value={rule.fixedCost} disabled={!canPublish || rule.billingMode !== "fixed"} onChange={(value) => updateRule(rule.featureCode, { fixedCost: value, minCost: value, maxCost: value })} />
-                  <PriceInput label="输入 / 千 Token" value={rule.inputTokenCostPer1K} disabled={!canPublish || rule.billingMode !== "token"} onChange={(value) => updateRule(rule.featureCode, { inputTokenCostPer1K: value })} />
-                  <PriceInput label="输出 / 千 Token" value={rule.outputTokenCostPer1K} disabled={!canPublish || rule.billingMode !== "token"} onChange={(value) => updateRule(rule.featureCode, { outputTokenCostPer1K: value })} />
+                  <RulePriceEditor rule={rule} disabled={!canPublish} onChange={(patch) => updateRule(rule.featureCode, patch)} />
                   <div className="grid grid-cols-2 gap-2">
                     <PriceInput label="最低" value={rule.minCost} disabled={!canPublish || rule.billingMode === "fixed"} onChange={(value) => updateRule(rule.featureCode, { minCost: value })} />
                     <PriceInput label="最高" value={rule.maxCost} disabled={!canPublish || rule.billingMode === "fixed"} onChange={(value) => updateRule(rule.featureCode, { maxCost: value })} />
@@ -217,6 +215,17 @@ export function PricingPage(): React.ReactElement {
       )}
     </div>
   );
+}
+
+function RulePriceEditor({ rule, disabled, onChange }: { rule: PricingRule; disabled: boolean; onChange: (patch: Partial<PricingRule>) => void }): React.ReactElement {
+  if (rule.billingMode === "fixed") {
+    return <PriceInput label="固定价" value={rule.fixedCost} disabled={disabled} onChange={(value) => onChange({ fixedCost: value, minCost: value, maxCost: value })} />;
+  }
+  if (rule.billingMode === "token") {
+    return <div className="grid grid-cols-2 gap-2"><PriceInput label="输入 / 千 Token" value={rule.inputTokenCostPer1K} disabled={disabled} onChange={(value) => onChange({ inputTokenCostPer1K: value })} /><PriceInput label="输出 / 千 Token" value={rule.outputTokenCostPer1K} disabled={disabled} onChange={(value) => onChange({ outputTokenCostPer1K: value })} /></div>;
+  }
+  const countNoun = rule.unitName.endsWith("篇") ? "篇" : "条";
+  return <div className="space-y-1"><PriceInput label={`${rule.unitName}单价`} value={rule.perUnitCost} disabled={disabled} onChange={(value) => onChange({ perUnitCost: value })} /><p className="text-xs text-muted-foreground">每 {rule.unitSize.toLocaleString("zh-CN")} {countNoun}为一档，不足一档按一档计</p></div>;
 }
 
 function PriceInput({ label, value, disabled, onChange }: { label: string; value: number; disabled: boolean; onChange: (value: number) => void }): React.ReactElement {

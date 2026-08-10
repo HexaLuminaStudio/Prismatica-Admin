@@ -7,6 +7,7 @@ export interface PricingRule {
   displayName: string;
   billingMode: BillingMode;
   unitName: string;
+  unitSize: number;
   fixedCost: number;
   baseCost: number;
   perUnitCost: number;
