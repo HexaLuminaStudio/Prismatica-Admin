@@ -17,6 +17,7 @@ import {
   LogOut,
   ChevronRight,
   KeyRound,
+  BadgeDollarSign,
 } from "lucide-react";
 import { useSessionStore } from "@/store/session";
 import { ChangePasswordDialog } from "@/components/ChangePasswordDialog";
@@ -36,6 +37,7 @@ const NAV: NavItem[] = [
   { to: "/users", label: "用户管理", icon: Users },
   { to: "/codes", label: "凭证签发", icon: Ticket },
   { to: "/bills", label: "账单管理", icon: Receipt },
+  { to: "/pricing", label: "定价中心", icon: BadgeDollarSign },
   { to: "/audit", label: "审计日志", icon: ScrollText },
   { to: "/admins", label: "账号管理", icon: UserCog, ownerOnly: true },
 ];

@@ -13,6 +13,7 @@ import { CodesPage } from "@/pages/Codes";
 import { BillsPage } from "@/pages/Bills";
 import { AuditPage } from "@/pages/Audit";
 import { AdminsPage } from "@/pages/Admins";
+import { PricingPage } from "@/pages/Pricing";
 import { NotFoundPage } from "@/pages/NotFound";
 import { useSessionStore } from "@/store/session";
 
@@ -70,6 +71,7 @@ const router = createBrowserRouter([
           { path: "users", element: <UsersPage /> },
           { path: "codes", element: <CodesPage /> },
           { path: "bills", element: <BillsPage /> },
+          { path: "pricing", element: <PricingPage /> },
           { path: "audit", element: <AuditPage /> },
           {
             path: "admins",

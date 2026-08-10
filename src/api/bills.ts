@@ -15,6 +15,10 @@ export interface AdminBillItem {
   taskId: string;
   description: string;
   idempotencyKey: string | null;
+  pricingVersion?: string | null;
+  pricingSnapshot?: Record<string, unknown>;
+  inputTokens?: number | null;
+  outputTokens?: number | null;
   createdAt: string;
   settledAt: string | null;
 }

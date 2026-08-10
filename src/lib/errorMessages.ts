@@ -89,6 +89,14 @@ const MESSAGE_MAP: Record<string, ErrorMessage> = {
     title: "幂等键冲突",
     description: "同样的 Idempotency-Key 但参数不一致,请重试或更换 key。",
   },
+  PRICING_RULE_INVALID: {
+    title: "价格规则无效",
+    description: "请检查计费模式、单价及最低/最高费用后再发布。",
+  },
+  PRICING_VERSION_NOT_FOUND: {
+    title: "价格版本不存在",
+    description: "目标草稿可能已被删除或发布，请刷新价格目录。",
+  },
 
   // --- 设备 ---
   MAX_DEVICES_REACHED: {

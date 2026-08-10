@@ -124,6 +124,11 @@ export function BillDetailDrawer({ billId, onClose }: Props): React.ReactElement
                   mono
                 />
                 <Item
+                  label="价格版本"
+                  value={detail.pricingVersion || "—"}
+                  mono
+                />
+                <Item
                   label="创建时间"
                   value={formatDate(detail.createdAt)}
                 />
@@ -156,11 +161,26 @@ export function BillDetailDrawer({ billId, onClose }: Props): React.ReactElement
                   mono
                 />
                 <Item
+                  label="输入 Token"
+                  value={detail.inputTokens?.toLocaleString() ?? "—"}
+                  mono
+                />
+                <Item
+                  label="输出 Token"
+                  value={detail.outputTokens?.toLocaleString() ?? "—"}
+                  mono
+                />
+                <Item
                   label="余额变动"
                   value={`${detail.balanceBefore.toLocaleString()} → ${detail.balanceAfter.toLocaleString()}`}
                   mono
                 />
               </div>
+
+              <div className="text-sm font-medium">锁定价格快照</div>
+              <pre className="max-h-56 overflow-auto rounded-md border bg-muted/20 p-3 text-xs">
+                {JSON.stringify(detail.pricingSnapshot ?? {}, null, 2)}
+              </pre>
 
               <div className="text-sm font-medium">描述</div>
               <div className="rounded-md border bg-muted/20 p-3 text-xs">
