@@ -20,6 +20,7 @@ import {
   AdminUserLedgerItem,
   getUserDetail,
   getUserSubscriptions,
+  createUserSubscription,
   getUserDevices,
   getUserLedger,
   revokeUserDevice,
@@ -31,6 +32,7 @@ import {
   revokeUserSessions,
   createUser,
   type ListUsersParams,
+  type SubscriptionPlanCode,
   listUsers,
 } from "@/api/users";
 
@@ -96,6 +98,10 @@ export interface UsersState {
   createUser: (input: { email: string; password: string; displayName?: string; tier?: string; status?: string }) => Promise<AdminUserDetail>;
   changeProfile: (userId: string, patch: { tier?: string; status?: string; email?: string; displayName?: string }) => Promise<void>;
   grant: (userId: string, amount: number, note: string) => Promise<{ newBalance: number }>;
+  createSubscription: (
+    userId: string,
+    planCode: SubscriptionPlanCode
+  ) => Promise<{ grantedBalance: number }>;
   resetPassword: (userId: string) => Promise<{ newPassword: string }>;
   revokeSessions: (userId: string, reason?: string) => Promise<{ revokedCount: number }>;
   revokeDevice: (userId: string, deviceId: string) => Promise<void>;
@@ -290,6 +296,13 @@ export const useUsersStore = create<UsersState>((set, get) => ({
       set((s) => ({ detailCache: { ...s.detailCache, [userId]: { ...cache } } }));
     }
     return { newBalance: r.newBalance };
+  },
+
+  async createSubscription(userId, planCode) {
+    const result = await createUserSubscription(userId, planCode);
+    await get().refreshDetail(userId);
+    await get().loadTab(userId, "subscription", true);
+    return { grantedBalance: result.grantedBalance };
   },
 
   async resetPassword(userId) {

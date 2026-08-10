@@ -88,6 +88,14 @@ export interface AdminUserSubscriptionsResponse {
   items: AdminUserSubscription[];
 }
 
+export type SubscriptionPlanCode = "trial" | "pro_monthly" | "team_monthly";
+
+export interface AdminCreateSubscriptionResponse {
+  userId: string;
+  subscription: AdminUserSubscription;
+  grantedBalance: number;
+}
+
 export async function getUserSubscriptions(
   userId: string
 ): Promise<AdminUserSubscription[]> {
@@ -95,6 +103,19 @@ export async function getUserSubscriptions(
     `/v1/admin/users/${encodeURIComponent(userId)}/subscriptions`
   );
   return resp.items ?? [];
+}
+
+export async function createUserSubscription(
+  userId: string,
+  planCode: SubscriptionPlanCode
+): Promise<AdminCreateSubscriptionResponse> {
+  return apiRequest(
+    `/v1/admin/users/${encodeURIComponent(userId)}/subscriptions`,
+    {
+      method: "POST",
+      json: { planCode },
+    }
+  );
 }
 
 export interface AdminUserDevice {

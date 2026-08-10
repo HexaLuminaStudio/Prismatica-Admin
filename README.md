@@ -116,6 +116,7 @@ src/
 | GET | `/v1/admin/users` | 列表(支持 `status` / `tier` / `q` / `registeredAfter` / `registeredBefore` / `cursor` / `limit`) | `UsersPage` + `useUsersStore.loadList` |
 | GET | `/v1/admin/users/{id}` | 详情 | `UserDetailDrawer` + `useUsersStore.refreshDetail` |
 | GET | `/v1/admin/users/{id}/subscriptions` | 该用户订阅列表 | `UserDetailDrawer` Subscription tab |
+| POST | `/v1/admin/users/{id}/subscriptions` | 为用户开通试用 / Pro / Team 订阅 | `UserDetailDrawer` Subscription tab |
 | GET | `/v1/admin/users/{id}/devices` | 该用户设备列表 | `UserDetailDrawer` Devices tab |
 | POST | `/v1/admin/users/{id}/devices/{deviceId}/revoke` | 撤销设备 | `UserDetailDrawer` Devices tab |
 | GET | `/v1/admin/users/{id}/ledger` | 该用户账本(余额变动) | `UserDetailDrawer` Balance / Ledger tab |

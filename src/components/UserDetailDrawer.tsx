@@ -26,6 +26,8 @@ import {
   Mail,
   Trash2,
   Copy,
+  CalendarPlus,
+  CheckCircle2,
 } from "lucide-react";
 import { useUsersStore, type DetailTab } from "@/store/users";
 import {
@@ -33,6 +35,7 @@ import {
   AdminUserSubscription,
   AdminUserDevice,
   AdminUserLedgerItem,
+  type SubscriptionPlanCode,
 } from "@/api/users";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -52,6 +55,24 @@ import { toast } from "@/components/Toast";
 
 const TIERS = ["free", "pro", "team", "guest", "trial", "beta", "beta_pro", "paid"] as const;
 const STATUSES = ["active", "paused", "banned", "deleted"] as const;
+const SUBSCRIPTION_PLANS: Array<{
+  code: SubscriptionPlanCode;
+  name: string;
+  detail: string;
+}> = [
+  { code: "trial", name: "试用订阅", detail: "7 天 · 20 点额度" },
+  { code: "pro_monthly", name: "Pro 月度", detail: "30 天 · 200 点额度" },
+  { code: "team_monthly", name: "Team 月度", detail: "30 天 · 1,000 点额度" },
+];
+const SUBSCRIPTION_PLAN_NAMES = Object.fromEntries(
+  SUBSCRIPTION_PLANS.map((plan) => [plan.code, plan.name])
+) as Record<string, string>;
+const SUBSCRIPTION_STATUS_NAMES: Record<string, string> = {
+  active: "有效",
+  expired: "已过期",
+  canceled: "已取消",
+  past_due: "待续费",
+};
 type Tier = (typeof TIERS)[number];
 type Status = (typeof STATUSES)[number];
 
@@ -178,6 +199,7 @@ export function UserDetailDrawer({ userId, onClose }: Props): React.ReactElement
               {tab === "subscription" && (
                 <SubscriptionTab
                   cache={cache}
+                  userId={userId}
                   onRefresh={() => void loadTab(userId, "subscription", true)}
                 />
               )}
@@ -589,35 +611,107 @@ function SummaryItem({
 
 function SubscriptionTab({
   cache,
+  userId,
   onRefresh,
 }: {
   cache: ReturnType<typeof useUsersStore.getState>["detailCache"][string];
+  userId: string;
   onRefresh: () => void;
 }): React.ReactElement {
+  const createSubscription = useUsersStore((s) => s.createSubscription);
+  const [dialogOpen, setDialogOpen] = React.useState(false);
+  const [creating, setCreating] = React.useState(false);
   if (!cache || cache === "loading") return <></>;
   const loading = cache.loadingTabs.subscription;
   const err = cache.tabErrors.subscription;
   const items = cache.subscriptions;
+  const hasActiveSubscription = (items ?? []).some(
+    (item) =>
+      item.status === "active" &&
+      new Date(item.currentPeriodEnd).getTime() > Date.now()
+  );
+
+  const handleCreate = async (planCode: SubscriptionPlanCode) => {
+    if (creating) return;
+    setCreating(true);
+    try {
+      const result = await createSubscription(userId, planCode);
+      setDialogOpen(false);
+      toast({
+        kind: "success",
+        title: "订阅已开通",
+        description: `资源下载权限已生效，同时派发 ${result.grantedBalance.toLocaleString()} 点额度。`,
+      });
+    } catch (error) {
+      const message = classifyError(error);
+      toast({
+        kind: "error",
+        title: message.title,
+        description: message.description,
+      });
+    } finally {
+      setCreating(false);
+    }
+  };
 
   return (
-    <TabScaffold
-      title="订阅"
-      icon={<Receipt className="h-4 w-4" />}
-      loading={!!loading}
-      error={err ?? null}
-      onRefresh={onRefresh}
-      empty={!loading && !err && (items?.length ?? 0) === 0}
-      emptyText="该用户暂无订阅记录"
-    >
-      {items && items.length > 0 && (
-        <div className="space-y-2">
+    <>
+      <TabScaffold
+        title="订阅"
+        icon={<Receipt className="h-4 w-4" />}
+        loading={!!loading}
+        error={err ?? null}
+        onRefresh={onRefresh}
+        empty={false}
+        emptyText=""
+      >
+        <div className="space-y-4">
+          <div className="flex flex-col gap-3 rounded-md border bg-muted/20 p-4 sm:flex-row sm:items-center sm:justify-between">
+            <div className="min-w-0">
+              <div className="flex items-center gap-2 text-sm font-medium">
+                <CheckCircle2 className="h-4 w-4 text-primary" />
+                HSK 资源下载权限
+              </div>
+              <p className="mt-1 text-xs leading-5 text-muted-foreground">
+                有效的试用、Pro 或 Team 订阅均可下载受保护数据库。
+              </p>
+            </div>
+            <Button
+              size="sm"
+              onClick={() => setDialogOpen(true)}
+              disabled={hasActiveSubscription || creating}
+            >
+              {creating ? (
+                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+              ) : (
+                <CalendarPlus className="mr-2 h-4 w-4" />
+              )}
+              {hasActiveSubscription ? "已有有效订阅" : "开通订阅"}
+            </Button>
+          </div>
+
+          {!loading && !err && (items?.length ?? 0) === 0 && (
+            <div className="rounded-md border border-dashed p-6 text-center text-xs text-muted-foreground">
+              该用户暂无订阅记录，可从上方选择计划开通。
+            </div>
+          )}
+
+          {items && items.length > 0 && (
+            <div className="space-y-2">
           {items.map((s: AdminUserSubscription) => (
             <div
               key={s.subscriptionId}
               className="rounded-md border bg-muted/20 p-3 text-xs"
             >
               <div className="flex items-center justify-between">
-                <div className="font-medium">{s.planCode}</div>
+                <div>
+                  <div className="font-medium">
+                    {SUBSCRIPTION_PLAN_NAMES[s.planCode] ?? s.planCode}
+                  </div>
+                  <div className="mt-0.5 text-muted-foreground">
+                    {s.planCode}
+                  </div>
+                </div>
                 <Badge
                   variant={
                     s.status === "active"
@@ -627,7 +721,7 @@ function SubscriptionTab({
                         : "destructive"
                   }
                 >
-                  {s.status}
+                  {SUBSCRIPTION_STATUS_NAMES[s.status] ?? s.status}
                 </Badge>
               </div>
               <div className="mt-2 grid grid-cols-2 gap-y-1 md:grid-cols-4">
@@ -648,9 +742,111 @@ function SubscriptionTab({
               </div>
             </div>
           ))}
+            </div>
+          )}
         </div>
+      </TabScaffold>
+      {dialogOpen && (
+        <SubscriptionDialog
+          busy={creating}
+          onClose={() => !creating && setDialogOpen(false)}
+          onSubmit={(planCode) => void handleCreate(planCode)}
+        />
       )}
-    </TabScaffold>
+    </>
+  );
+}
+
+function SubscriptionDialog({
+  busy,
+  onClose,
+  onSubmit,
+}: {
+  busy: boolean;
+  onClose: () => void;
+  onSubmit: (planCode: SubscriptionPlanCode) => void;
+}): React.ReactElement {
+  const [planCode, setPlanCode] = React.useState<SubscriptionPlanCode>(
+    "pro_monthly"
+  );
+
+  return (
+    <div
+      className="fixed inset-0 z-[60] flex items-center justify-center bg-black/40 p-4"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="subscription-dialog-title"
+    >
+      <div className="w-full max-w-md rounded-lg border bg-card p-5 shadow-xl">
+        <div className="mb-4 flex items-start justify-between gap-4">
+          <div>
+            <div id="subscription-dialog-title" className="text-sm font-semibold">
+              开通用户订阅
+            </div>
+            <p className="mt-1 text-xs leading-5 text-muted-foreground">
+              开通后资源下载权限立即生效，并派发该计划的首期额度。
+            </p>
+          </div>
+          <Button
+            type="button"
+            size="icon"
+            variant="ghost"
+            onClick={onClose}
+            disabled={busy}
+            aria-label="关闭开通订阅窗口"
+          >
+            <X className="h-4 w-4" />
+          </Button>
+        </div>
+
+        <div className="space-y-2" role="radiogroup" aria-label="订阅计划">
+          {SUBSCRIPTION_PLANS.map((plan) => {
+            const selected = planCode === plan.code;
+            return (
+              <button
+                key={plan.code}
+                type="button"
+                role="radio"
+                aria-checked={selected}
+                onClick={() => setPlanCode(plan.code)}
+                disabled={busy}
+                className={cn(
+                  "flex w-full items-center justify-between rounded-md border px-4 py-3 text-left transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2",
+                  selected
+                    ? "border-primary bg-primary/5"
+                    : "border-input hover:bg-muted/50"
+                )}
+              >
+                <span>
+                  <span className="block text-sm font-medium">{plan.name}</span>
+                  <span className="mt-1 block text-xs text-muted-foreground">
+                    {plan.detail}
+                  </span>
+                </span>
+                <span
+                  className={cn(
+                    "h-4 w-4 rounded-full border",
+                    selected
+                      ? "border-[5px] border-primary"
+                      : "border-muted-foreground/40"
+                  )}
+                />
+              </button>
+            );
+          })}
+        </div>
+
+        <div className="mt-5 flex justify-end gap-2">
+          <Button type="button" variant="ghost" onClick={onClose} disabled={busy}>
+            取消
+          </Button>
+          <Button type="button" onClick={() => onSubmit(planCode)} disabled={busy}>
+            {busy && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+            确认开通
+          </Button>
+        </div>
+      </div>
+    </div>
   );
 }
 

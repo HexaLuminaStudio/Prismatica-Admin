@@ -17,6 +17,7 @@ vi.mock("@/api/users", () => ({
   listUsers: vi.fn(),
   getUserDetail: vi.fn(),
   getUserSubscriptions: vi.fn(),
+  createUserSubscription: vi.fn(),
   getUserDevices: vi.fn(),
   getUserLedger: vi.fn(),
   revokeUserDevice: vi.fn(),
@@ -27,6 +28,7 @@ vi.mock("@/api/users", () => ({
 
 const mockedGetUserDetail = vi.mocked(usersApi.getUserDetail);
 const mockedGetUserSubscriptions = vi.mocked(usersApi.getUserSubscriptions);
+const mockedCreateUserSubscription = vi.mocked(usersApi.createUserSubscription);
 const mockedGetUserDevices = vi.mocked(usersApi.getUserDevices);
 const mockedGetUserLedger = vi.mocked(usersApi.getUserLedger);
 
@@ -101,6 +103,11 @@ describe("UserDetailDrawer", () => {
     vi.clearAllMocks();
     mockedGetUserDetail.mockResolvedValue({ ...FIXED_DETAIL });
     mockedGetUserSubscriptions.mockResolvedValue([...SUBSCRIPTIONS]);
+    mockedCreateUserSubscription.mockResolvedValue({
+      userId: "u_001",
+      subscription: { ...SUBSCRIPTIONS[0] },
+      grantedBalance: 200,
+    });
     mockedGetUserDevices.mockResolvedValue([...DEVICES]);
     mockedGetUserLedger.mockResolvedValue([...LEDGER]);
   });
@@ -176,6 +183,24 @@ describe("UserDetailDrawer", () => {
     fireEvent.click(screen.getByRole("button", { name: /刷新账本/i }));
     await waitFor(() => {
       expect(mockedGetUserLedger).toHaveBeenCalledTimes(2);
+    });
+  });
+
+  it("无有效订阅时可从订阅页开通 Pro 月度", async () => {
+    mockedGetUserSubscriptions.mockResolvedValue([]);
+    render(<UserDetailDrawer userId="u_001" onClose={() => {}} />);
+    await screen.findByText("会员等级");
+
+    clickTab("订阅");
+    fireEvent.click(await screen.findByRole("button", { name: "开通订阅" }));
+    expect(screen.getByRole("dialog", { name: "开通用户订阅" })).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "确认开通" }));
+    await waitFor(() => {
+      expect(mockedCreateUserSubscription).toHaveBeenCalledWith(
+        "u_001",
+        "pro_monthly"
+      );
     });
   });
 });
