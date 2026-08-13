@@ -36,17 +36,17 @@ const overview = {
       enabled: true,
     },
     {
-      featureCode: "hsk_essay_export",
-      displayName: "HSK 作文导出",
+      featureCode: "hsk_download",
+      displayName: "HSK 语料下载",
       billingMode: "metered" as const,
-      unitName: "百篇",
-      unitSize: 100,
+      unitName: "千条",
+      unitSize: 1000,
       fixedCost: 0,
       baseCost: 0,
-      perUnitCost: 1,
+      perUnitCost: 3,
       inputTokenCostPer1K: 0,
       outputTokenCostPer1K: 0,
-      minCost: 1,
+      minCost: 3,
       maxCost: 1_000_000,
       enabled: true,
     },
@@ -73,7 +73,7 @@ describe("PricingPage", () => {
     expect(screen.getByText(/只有 owner 能创建并发布/)).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /发布新价格/ })).not.toBeInTheDocument();
     expect(screen.getByLabelText("固定价")).toBeDisabled();
-    expect(screen.getByText(/每 100 篇为一档/)).toBeInTheDocument();
+    expect(screen.getByText(/每 1,000 条为一档/)).toBeInTheDocument();
   });
 
   it("owner 修改后确认发布完整的新价格版本", async () => {
@@ -105,9 +105,9 @@ describe("PricingPage", () => {
     );
   });
 
-  it("owner 可以调整按量导出单价", async () => {
+  it("owner 可以调整按量下载单价", async () => {
     render(<PricingPage />);
-    const meteredInput = await screen.findByLabelText("百篇单价");
+    const meteredInput = await screen.findByLabelText("千条单价");
     fireEvent.change(meteredInput, { target: { value: "4" } });
     fireEvent.click(screen.getByRole("button", { name: /发布新价格/ }));
     vi.mocked(createPricingDraft).mockResolvedValue({
@@ -123,8 +123,8 @@ describe("PricingPage", () => {
     fireEvent.click(screen.getByRole("button", { name: "确认发布" }));
     await waitFor(() => expect(createPricingDraft).toHaveBeenCalled());
     expect(vi.mocked(createPricingDraft).mock.calls[0][0][1]).toMatchObject({
-      featureCode: "hsk_essay_export",
-      unitSize: 100,
+      featureCode: "hsk_download",
+      unitSize: 1000,
       perUnitCost: 4,
     });
   });
