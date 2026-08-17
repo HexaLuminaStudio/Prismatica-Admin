@@ -11,8 +11,9 @@ export interface PricingRule {
   fixedCost: number;
   baseCost: number;
   perUnitCost: number;
-  inputTokenCostPer1K: number;
-  outputTokenCostPer1K: number;
+  inputTokenCostPerUnit: number;
+  outputTokenCostPerUnit: number;
+  tokenPricingVersion?: number;
   minCost: number;
   maxCost: number;
   enabled: boolean;

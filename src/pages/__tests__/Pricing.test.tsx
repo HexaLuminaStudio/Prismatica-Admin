@@ -29,8 +29,8 @@ const overview = {
       fixedCost: 5,
       baseCost: 0,
       perUnitCost: 0,
-      inputTokenCostPer1K: 0,
-      outputTokenCostPer1K: 0,
+      inputTokenCostPerUnit: 0,
+      outputTokenCostPerUnit: 0,
       minCost: 5,
       maxCost: 5,
       enabled: true,
@@ -44,10 +44,25 @@ const overview = {
       fixedCost: 0,
       baseCost: 0,
       perUnitCost: 3,
-      inputTokenCostPer1K: 0,
-      outputTokenCostPer1K: 0,
+      inputTokenCostPerUnit: 0,
+      outputTokenCostPerUnit: 0,
       minCost: 3,
       maxCost: 1_000_000,
+      enabled: true,
+    },
+    {
+      featureCode: "ai_chat",
+      displayName: "AI 聊天",
+      billingMode: "token" as const,
+      unitName: "Token",
+      unitSize: 1_000_000,
+      fixedCost: 0,
+      baseCost: 0,
+      perUnitCost: 0,
+      inputTokenCostPerUnit: 1,
+      outputTokenCostPerUnit: 2,
+      minCost: 1,
+      maxCost: 100_000,
       enabled: true,
     },
   ],
@@ -126,6 +141,33 @@ describe("PricingPage", () => {
       featureCode: "hsk_download",
       unitSize: 1000,
       perUnitCost: 4,
+    });
+  });
+
+  it("owner 可以按更大的 Token 单位调整 AI 定价", async () => {
+    render(<PricingPage />);
+    expect(await screen.findByText("AI 聊天")).toBeInTheDocument();
+    expect(screen.getByText(/每 1,000,000 Token 为计价单位/)).toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText("Token 计量单位"), { target: { value: "500000" } });
+    fireEvent.change(screen.getByLabelText("输出 / 单位"), { target: { value: "3" } });
+    fireEvent.click(screen.getByRole("button", { name: /发布新价格/ }));
+    vi.mocked(createPricingDraft).mockResolvedValue({
+      versionCode: "20260817120000-ai",
+      status: "draft",
+      rules: overview.rules,
+    });
+    vi.mocked(publishPricingVersion).mockResolvedValue({
+      versionCode: "20260817120000-ai",
+      status: "published",
+      publishedAt: "2026-08-17T12:00:00Z",
+    });
+    fireEvent.click(screen.getByRole("button", { name: "确认发布" }));
+    await waitFor(() => expect(createPricingDraft).toHaveBeenCalled());
+    expect(vi.mocked(createPricingDraft).mock.calls[0][0][2]).toMatchObject({
+      featureCode: "ai_chat",
+      unitSize: 500_000,
+      inputTokenCostPerUnit: 1,
+      outputTokenCostPerUnit: 3,
     });
   });
 });
