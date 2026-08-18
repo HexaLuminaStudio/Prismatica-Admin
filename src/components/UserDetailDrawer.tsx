@@ -67,7 +67,6 @@ const STATUS_OPTIONS = [
   { value: "active", label: "正常" },
   { value: "paused", label: "已停用" },
   { value: "banned", label: "已封禁" },
-  { value: "deleted", label: "已删除" },
 ] as const;
 const SUBSCRIPTION_PLANS: Array<{
   code: SubscriptionPlanCode;
@@ -92,6 +91,11 @@ type Status = (typeof STATUS_OPTIONS)[number]["value"];
 
 const isStatus = (value: string): value is Status =>
   STATUS_OPTIONS.some((option) => option.value === value);
+
+const toEditableStatus = (value: string): Status | "" => {
+  if (value === "suspended" || value === "expired") return "paused";
+  return isStatus(value) ? value : "";
+};
 
 const TAB_LABELS: Record<DetailTab, string> = {
   info: "基本信息",
@@ -268,9 +272,7 @@ function InfoTab({
   const removeUser = useUsersStore((s) => s.removeUser);
 
   const [tier, setTier] = React.useState<Tier>((detail.tier as Tier) ?? "free");
-  const [status, setStatus] = React.useState<Status | "">(
-    isStatus(detail.status) ? detail.status : ""
-  );
+  const [status, setStatus] = React.useState<Status | "">(toEditableStatus(detail.status));
   const [email, setEmail] = React.useState(detail.email ?? "");
   const [displayName, setDisplayName] = React.useState(detail.displayName ?? "");
   const [busy, setBusy] = React.useState<
@@ -281,9 +283,7 @@ function InfoTab({
 
   React.useEffect(() => {
     setTier((detail.tier as Tier) ?? "free");
-    setStatus(
-      isStatus(detail.status) ? detail.status : isTier(detail.status) ? "" : ""
-    );
+    setStatus(toEditableStatus(detail.status));
     setEmail(detail.email ?? "");
     setDisplayName(detail.displayName ?? "");
   }, [detail.tier, detail.status, detail.email, detail.displayName]);
@@ -1195,5 +1195,7 @@ function GrantDialog({
       </div>
     </div>
   );
+}
+
 const isTier = (value: string): value is Tier =>
   TIER_OPTIONS.some((option) => option.value === value);

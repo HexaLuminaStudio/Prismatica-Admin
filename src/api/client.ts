@@ -16,7 +16,9 @@
  */
 
 const envBaseUrl = (import.meta.env.VITE_API_BASE_URL as string) || "";
-export const API_BASE_URL = envBaseUrl.replace(/\/$/, "");
+const resolvedApiBase = envBaseUrl.replace(/\/$/, "");
+// 开发环境优先走 Vite proxy；生产再走显式配置的 baseUrl（若有）。
+export const API_BASE_URL = import.meta.env.DEV ? "" : resolvedApiBase;
 
 export interface ApiErrorBody {
   code: string;
@@ -79,8 +81,12 @@ function isRetryable(httpStatus: number, code?: string): boolean {
   return false;
 }
 
-function buildUrl(path: string, query?: Record<string, unknown>): string {
-  const base = API_BASE_URL || "";
+function buildUrl(
+  path: string,
+  query?: Record<string, unknown>,
+  baseUrl?: string
+): string {
+  const base = (baseUrl ?? API_BASE_URL) || "";
   let url = base + path;
   if (query) {
     const entries = Object.entries(query).filter(
@@ -130,6 +136,14 @@ function parseEnvelope(body: unknown): {
   };
 }
 
+function getRequestUrls(path: string, query?: Record<string, unknown>): string[] {
+  const relativeUrl = buildUrl(path, query, "");
+  if (!API_BASE_URL) return [relativeUrl];
+  const absoluteUrl = buildUrl(path, query, API_BASE_URL);
+  if (absoluteUrl === relativeUrl) return [relativeUrl];
+  return [absoluteUrl, relativeUrl];
+}
+
 export async function apiRequest<T = unknown>(
   path: string,
   opts: RequestOptions = {}
@@ -159,35 +173,48 @@ export async function apiRequest<T = unknown>(
     init.body = JSON.stringify(json);
   }
 
-  const url = buildUrl(path, query);
+  const requestUrls = getRequestUrls(path, query);
   let lastError: ApiClientError | null = null;
 
-  for (let attempt = 0; attempt < maxAttempts; attempt++) {
-    if (attempt > 0) {
-      // 指数退避:250ms, 500ms
-      await sleep(RETRY_BASE_MS * Math.pow(2, attempt - 1));
-    }
-    try {
-      const result = await performRequest<T>(
-        url,
-        init,
-        skipAuthRedirect === true,
-        responseType
-      );
-      return result;
-    } catch (e) {
-      if (e instanceof ApiClientError) {
-        lastError = e;
-        // 401 不重试(cookie 已失效,重试无意义)
-        if (e.httpStatus === 401) throw e;
-        // 4xx 业务错误也不重试
-        if (e.httpStatus >= 400 && e.httpStatus < 500 && e.httpStatus !== 0) throw e;
-        // 5xx / NETWORK_ERROR 才考虑重试
-        if (!isRetryable(e.httpStatus, e.code)) throw e;
-        // 已是最后一次 → 直接抛
-        if (attempt === maxAttempts - 1) throw e;
-      } else {
-        throw e;
+  for (let ui = 0; ui < requestUrls.length; ui++) {
+    const url = requestUrls[ui];
+    const isFallbackUrl = ui > 0;
+    for (let attempt = 0; attempt < maxAttempts; attempt++) {
+      if (attempt > 0) {
+        // 指数退避:250ms, 500ms
+        await sleep(RETRY_BASE_MS * Math.pow(2, attempt - 1));
+      }
+      try {
+        const result = await performRequest<T>(
+          url,
+          init,
+          skipAuthRedirect === true,
+          responseType
+        );
+        return result;
+      } catch (e) {
+        if (e instanceof ApiClientError) {
+          lastError = e;
+          // 401 不重试(cookie 已失效,重试无意义)
+          if (e.httpStatus === 401) throw e;
+          // 4xx 业务错误也不重试
+          if (e.httpStatus >= 400 && e.httpStatus < 500 && e.httpStatus !== 0) throw e;
+          // 5xx / NETWORK_ERROR 才考虑重试
+          if (!isRetryable(e.httpStatus, e.code)) throw e;
+          // 端口映射不通时优先切回同源兜底地址，避免无谓重试浪费时间
+          if (
+            !isFallbackUrl &&
+            requestUrls.length > 1 &&
+            e.httpStatus === 0 &&
+            e.code === "NETWORK_ERROR"
+          ) {
+            break;
+          }
+          // 已是最后一次 → 直接抛
+          if (attempt === maxAttempts - 1) throw e;
+        } else {
+          throw e;
+        }
       }
     }
   }
