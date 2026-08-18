@@ -213,11 +213,17 @@ export async function resetUserPassword(
 
 export async function deleteUser(
   userId: string,
-  confirm: string
+  confirm: string,
+  options?: {
+    hardDelete?: boolean;
+  }
 ): Promise<{ userId: string; deletedAt: string }> {
   return apiRequest(`/v1/admin/users/${encodeURIComponent(userId)}`, {
     method: "DELETE",
-    query: { confirm },
+    query: {
+      confirm,
+      hardDelete: options?.hardDelete ? "1" : "0",
+    },
   });
 }
 
@@ -225,6 +231,7 @@ export async function batchUsers(input: {
   action: "update_status" | "reset_password" | "delete";
   userIds: string[];
   status?: string;
+  hardDelete?: boolean;
 }): Promise<{
   action: string;
   successCount: number;

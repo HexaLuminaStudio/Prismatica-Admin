@@ -5,7 +5,7 @@
 @layer base {
   :root {
     /* shadcn/ui 风格调色板(浅色) */
-    --background: 0 0% 100%;
+    --background: 210 40% 99%;
     --foreground: 222 47% 11%;
     --card: 0 0% 100%;
     --card-foreground: 222 47% 11%;
@@ -52,8 +52,49 @@
   * {
     @apply border-border;
   }
+
   body {
-    @apply bg-background text-foreground;
+    @apply bg-background text-foreground antialiased;
+    font-feature-settings: "rlig" 1, "calt" 1, "ss01" 1;
+    text-rendering: optimizeLegibility;
+  }
+
+  /* Tabular 数字(用于金额 / 计数 / KPI) */
+  .tabular {
+    font-variant-numeric: tabular-nums;
+  }
+}
+
+@layer components {
+  /* 页面通用容器:统一 6xl 居中 + 间距 */
+  .page-shell {
+    @apply mx-auto w-full max-w-6xl space-y-4;
+  }
+
+  /* 页面标题区 */
+  .page-header {
+    @apply flex flex-col gap-1.5 sm:flex-row sm:items-center sm:justify-between;
+  }
+  .page-title {
+    @apply text-xl font-semibold tracking-tight text-foreground;
+  }
+  .page-subtitle {
+    @apply text-sm text-muted-foreground;
+  }
+
+  /* 筛选条容器 */
+  .filter-bar {
+    @apply rounded-lg border bg-muted/30 p-3;
+  }
+
+  /* 表格行 hover 强化 */
+  .table-row-hover {
+    @apply transition-colors hover:bg-muted/50;
+  }
+
+  /* 段落标题 */
+  .section-title {
+    @apply text-sm font-medium leading-none text-foreground;
   }
 }
 
@@ -69,5 +110,15 @@
   }
   .scrollbar-thin::-webkit-scrollbar-thumb:hover {
     background-color: hsl(var(--muted-foreground) / 0.7);
+  }
+  .scrollbar-thin::-webkit-scrollbar-track {
+    background: transparent;
+  }
+
+  /* 文本省略号 */
+  .text-ellipsis {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
 }

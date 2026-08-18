@@ -1,15 +1,11 @@
 /**
- * Dashboard(2026-08-06 P0-B M6 重构)
+ * Dashboard(2026-08-18 视觉重构)
  *
- * - 顶部 KPI 行(用户总数 / 7 日活跃 / 7 日 grant 总额 / 待结算账单 / 活跃兑换码)
- * - 订阅分布饼图(free / pro / team 三色,M6 新增)
- * - 兑换码看板(已签发 / 已使用 / 已撤销,M6 新增)
- * - 中间两栏:近 7 日 audit 行为分布 + 账单状态条
- * - 最近 audit 日志
- *
- * 数据源:metrics-summary + subscription-distribution + codes-kpi + audit + audit-summary
+ * - 顶部 KPI 行(5 个核心指标,带趋势线占位)
+ * - 订阅 tier 分布 + 近 7 日审计分布 + 账单状态三栏
+ * - 兑换码 7 日看板 + 最近审计
+ * - 全部使用模块化失败容错,部分失败不阻塞其他模块
  */
-
 import * as React from "react";
 import { Link } from "react-router-dom";
 import {
@@ -17,11 +13,13 @@ import {
   Activity,
   Coins,
   Clock,
-  AlertTriangle,
-  Loader2,
   RefreshCcw,
   Ticket,
   PieChart as PieIcon,
+  TrendingUp,
+  AlertTriangle,
+  Loader2,
+  Sparkles,
 } from "lucide-react";
 import {
   Bar,
@@ -52,7 +50,7 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import { formatDate, cn } from "@/lib/utils";
+import { cn, formatDate } from "@/lib/utils";
 import { userTierLabel } from "@/lib/labels";
 import type { AdminMetricsSummary } from "@/api/metrics";
 import type {
@@ -66,6 +64,7 @@ interface KpiCardProps {
   description?: string;
   icon: React.ComponentType<{ className?: string }>;
   accent?: string;
+  iconBg?: string;
 }
 
 function KpiCard({
@@ -74,22 +73,34 @@ function KpiCard({
   description,
   icon: Icon,
   accent = "text-primary",
+  iconBg = "bg-primary/10",
 }: KpiCardProps): React.ReactElement {
   return (
     <Card>
-      <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-        <CardTitle className="text-sm font-medium text-muted-foreground">
-          {title}
-        </CardTitle>
-        <Icon className={cn("h-5 w-5", accent)} />
-      </CardHeader>
-      <CardContent>
-        <div className="text-3xl font-bold tracking-tight">
-          {typeof value === "number" ? value.toLocaleString() : value}
+      <CardContent className="p-5">
+        <div className="flex items-start justify-between gap-3">
+          <div className="min-w-0 flex-1 space-y-1.5">
+            <div className="text-[12px] font-medium text-muted-foreground">{title}</div>
+            <div className="tabular text-[28px] font-semibold leading-none tracking-tight">
+              <span>
+                {value === "—" ? <span className="text-muted-foreground/40">—</span> : value}
+              </span>
+            </div>
+            {description && (
+              <div className="text-[11px] leading-relaxed text-muted-foreground">
+                {description}
+              </div>
+            )}
+          </div>
+          <span
+            className={cn(
+              "flex h-9 w-9 shrink-0 items-center justify-center rounded-lg",
+              iconBg
+            )}
+          >
+            <Icon className={cn("h-4 w-4", accent)} />
+          </span>
         </div>
-        {description && (
-          <p className="mt-1 text-xs text-muted-foreground">{description}</p>
-        )}
       </CardContent>
     </Card>
   );
@@ -113,7 +124,13 @@ interface State {
 
 type ModuleKey = "metrics" | "subscription" | "codes" | "auditSummary" | "recentAudit";
 
-const MODULE_KEYS: ModuleKey[] = ["metrics", "subscription", "codes", "auditSummary", "recentAudit"];
+const MODULE_KEYS: ModuleKey[] = [
+  "metrics",
+  "subscription",
+  "codes",
+  "auditSummary",
+  "recentAudit",
+];
 
 const INITIAL_LOADING: Record<ModuleKey, boolean> = {
   metrics: true,
@@ -141,14 +158,14 @@ const TIER_COLORS: Record<string, string> = {
   beta_pro: "#34d399",
   paid: "#f59e0b",
   free: "#94a3b8",
-  pro: "#60a5fa",
-  team: "#34d399",
+  pro: "#16a39e",
+  team: "#0ea5e9",
 };
 
+const FALLBACK_COLORS = ["#16a39e", "#0ea5e9", "#a78bfa", "#34d399", "#f59e0b", "#f472b6"];
+
 function pickColor(tier: string, idx: number): string {
-  if (TIER_COLORS[tier]) return TIER_COLORS[tier];
-  const fallback = ["#60a5fa", "#a78bfa", "#34d399", "#f59e0b", "#f472b6"];
-  return fallback[idx % fallback.length];
+  return TIER_COLORS[tier] ?? FALLBACK_COLORS[idx % FALLBACK_COLORS.length];
 }
 
 export function DashboardPage(): React.ReactElement {
@@ -231,88 +248,89 @@ export function DashboardPage(): React.ReactElement {
   }, [load]);
 
   return (
-    <div className="space-y-6">
-      {/* 标题 */}
-      <div className="flex items-end justify-between">
+    <div className="space-y-4">
+      {/* 页面标题 */}
+      <div className="page-header">
         <div>
-          <h1 className="text-2xl font-semibold tracking-tight">仪表盘</h1>
-          <p className="text-sm text-muted-foreground">
-            {me
-              ? `${me.username} · 你好,以下是平台近况`
-              : "以下是平台近况"}
+          <h1 className="page-title">仪表盘</h1>
+          <p className="page-subtitle">
+            {me ? `${me.username} · 你好,以下是平台近况` : "以下是平台近况"}
           </p>
         </div>
         <Button
           variant="outline"
           size="sm"
           onClick={() => void load()}
+          aria-busy={isLoading}
         >
-          <RefreshCcw
-            className={cn(
-              "mr-1 h-4 w-4",
-              isLoading && "animate-spin"
-            )}
-          />
+          <RefreshCcw className={cn(isLoading && "animate-spin")} />
           刷新
         </Button>
       </div>
 
       {/* KPI 行 */}
-      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-5">
+      <div className="grid grid-cols-2 gap-3 md:grid-cols-3 lg:grid-cols-5">
         <KpiCard
           title="用户总数"
           value={state.metrics?.userCount ?? "—"}
-          description="平台用户总人数"
+          description="平台注册用户总人数"
           icon={Users}
-          accent="text-sky-500"
+          accent="text-sky-600"
+          iconBg="bg-sky-500/10"
         />
         <KpiCard
           title="7 日活跃设备"
           value={state.metrics?.sevenDayActive ?? "—"}
-          description="过去 7 天有过活跃的设备数"
+          description="过去 7 天有过活跃"
           icon={Activity}
-          accent="text-emerald-500"
+          accent="text-emerald-600"
+          iconBg="bg-emerald-500/10"
         />
         <KpiCard
           title="7 日充值总额"
           value={state.metrics?.sevenDayGrantTotal ?? "—"}
           description="过去 7 天累计充值余额"
           icon={Coins}
-          accent="text-amber-500"
+          accent="text-amber-600"
+          iconBg="bg-amber-500/10"
         />
         <KpiCard
           title="待结算账单"
           value={state.metrics?.billsPending ?? "—"}
-          description="账单状态为待结算的数量"
+          description="pending 状态账单数"
           icon={Clock}
-          accent="text-rose-500"
+          accent="text-rose-600"
+          iconBg="bg-rose-500/10"
         />
         <KpiCard
           title="活跃兑换码"
           value={state.codesKpi?.activeCount ?? "—"}
-          description="已签发且未过期的有效码"
+          description="已签发且未过期"
           icon={Ticket}
-          accent="text-indigo-500"
+          accent="text-indigo-600"
+          iconBg="bg-indigo-500/10"
         />
       </div>
 
       {errorMessages.length > 0 && !isLoading && (
-        <div className="flex items-start gap-2 rounded-md border border-destructive/40 bg-destructive/10 p-3 text-sm text-destructive">
-          <AlertTriangle className="mt-0.5 h-4 w-4" />
-          <div>
+        <div className="flex items-start gap-3 rounded-lg border border-destructive/40 bg-destructive/5 p-3 text-sm text-destructive">
+          <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
+          <div className="min-w-0 flex-1">
             <div className="font-medium">部分仪表盘模块加载失败</div>
-            <div className="text-destructive/90">{errorMessages.join("；")}</div>
+            <div className="mt-0.5 break-all text-destructive/90">
+              {errorMessages.join("；")}
+            </div>
           </div>
         </div>
       )}
 
-      {/* 图表 + 详情三栏 */}
-      <div className="grid grid-cols-1 gap-4 lg:grid-cols-7">
-        {/* 订阅分布(M6) */}
+      {/* 图表三栏 */}
+      <div className="grid grid-cols-1 gap-3 lg:grid-cols-7">
+        {/* 订阅分布 */}
         <Card className="lg:col-span-2">
           <CardHeader>
             <CardTitle className="flex items-center gap-2">
-              <PieIcon className="h-4 w-4" />
+              <PieIcon className="h-4 w-4 text-muted-foreground" />
               订阅分布
             </CardTitle>
             <CardDescription>
@@ -321,17 +339,12 @@ export function DashboardPage(): React.ReactElement {
           </CardHeader>
           <CardContent>
             {state.loadingModules.subscription && state.subscriptionDistribution.length === 0 ? (
-              <div className="flex h-[260px] items-center justify-center text-sm text-muted-foreground">
-                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                加载中…
-              </div>
+              <ModuleSkeleton />
             ) : state.subscriptionDistribution.length === 0 ? (
-              <div className="flex h-[260px] items-center justify-center text-sm text-muted-foreground">
-                暂无订阅数据
-              </div>
+              <EmptyHint text="暂无订阅数据" />
             ) : (
               <div className="space-y-3">
-                <div className="h-[200px]">
+                <div className="h-[180px]">
                   <ResponsiveContainer width="100%" height="100%">
                     <PieChart>
                       <Pie
@@ -339,8 +352,9 @@ export function DashboardPage(): React.ReactElement {
                         dataKey="count"
                         nameKey="tier"
                         innerRadius={45}
-                        outerRadius={80}
+                        outerRadius={75}
                         paddingAngle={2}
+                        strokeWidth={0}
                       >
                         {state.subscriptionDistribution.map((d, idx) => (
                           <Cell
@@ -364,7 +378,7 @@ export function DashboardPage(): React.ReactElement {
                     </PieChart>
                   </ResponsiveContainer>
                 </div>
-                <div className="space-y-1">
+                <div className="space-y-1.5">
                   {state.subscriptionDistribution.map((d, idx) => {
                     const pct =
                       state.subscriptionTotal > 0
@@ -377,12 +391,12 @@ export function DashboardPage(): React.ReactElement {
                       >
                         <div className="flex items-center gap-2">
                           <span
-                            className="inline-block h-2 w-2 rounded-full"
+                            className="h-2 w-2 shrink-0 rounded-full"
                             style={{ background: pickColor(d.tier, idx) }}
                           />
-                          <span>{userTierLabel(d.tier)}</span>
+                          <span className="text-foreground">{userTierLabel(d.tier)}</span>
                         </div>
-                        <div className="font-mono text-muted-foreground">
+                        <div className="tabular text-muted-foreground">
                           {d.count.toLocaleString()} · {pct}%
                         </div>
                       </div>
@@ -397,37 +411,38 @@ export function DashboardPage(): React.ReactElement {
         {/* 近 7 日 audit 行为分布 */}
         <Card className="lg:col-span-3">
           <CardHeader>
-            <CardTitle>近 7 日 admin 行为分布</CardTitle>
-            <CardDescription>
-              按 audit_logs.action group by 计 count(来源:audit-summary)
-            </CardDescription>
+            <CardTitle className="flex items-center gap-2">
+              <TrendingUp className="h-4 w-4 text-muted-foreground" />
+              近 7 日 admin 行为分布
+            </CardTitle>
+            <CardDescription>按 audit_logs.action group by 计 count</CardDescription>
           </CardHeader>
           <CardContent>
             {state.loadingModules.auditSummary && state.summary.length === 0 ? (
-              <div className="flex h-[260px] items-center justify-center text-sm text-muted-foreground">
-                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                加载中…
-              </div>
+              <ModuleSkeleton />
             ) : state.summary.length === 0 ? (
-              <div className="flex h-[260px] items-center justify-center text-sm text-muted-foreground">
-                近 7 日暂无管理员操作记录
-              </div>
+              <EmptyHint text="近 7 日暂无管理员操作记录" />
             ) : (
-              <div className="h-[260px]">
+              <div className="h-[240px]">
                 <ResponsiveContainer width="100%" height="100%">
-                  <BarChart data={state.summary}>
-                    <CartesianGrid strokeDasharray="3 3" vertical={false} />
+                  <BarChart data={state.summary} margin={{ top: 8, right: 8, left: 0, bottom: 0 }}>
+                    <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="hsl(var(--border))" />
                     <XAxis
                       dataKey="action"
-                      tick={{ fontSize: 12, fill: "hsl(var(--muted-foreground))" }}
+                      tick={{ fontSize: 11, fill: "hsl(var(--muted-foreground))" }}
                       tickLine={false}
                       axisLine={false}
+                      interval={0}
+                      angle={-25}
+                      textAnchor="end"
+                      height={50}
                     />
                     <YAxis
                       allowDecimals={false}
-                      tick={{ fontSize: 12, fill: "hsl(var(--muted-foreground))" }}
+                      tick={{ fontSize: 11, fill: "hsl(var(--muted-foreground))" }}
                       tickLine={false}
                       axisLine={false}
+                      width={32}
                     />
                     <Tooltip
                       cursor={{ fill: "hsl(var(--accent))" }}
@@ -443,6 +458,7 @@ export function DashboardPage(): React.ReactElement {
                       name="次数"
                       fill="hsl(var(--primary))"
                       radius={[6, 6, 0, 0]}
+                      maxBarSize={40}
                     />
                   </BarChart>
                 </ResponsiveContainer>
@@ -455,7 +471,7 @@ export function DashboardPage(): React.ReactElement {
         <Card className="lg:col-span-2">
           <CardHeader>
             <CardTitle>账单状态(近 7 日)</CardTitle>
-            <CardDescription>settled / refunded</CardDescription>
+            <CardDescription>settled / refunded 占比</CardDescription>
           </CardHeader>
           <CardContent className="space-y-4">
             <BillBar
@@ -477,55 +493,53 @@ export function DashboardPage(): React.ReactElement {
               colorClass="bg-rose-500"
             />
             {state.metrics && (
-              <div className="pt-2 text-xs text-muted-foreground">
-                占比高的颜色 = 该状态活跃
+              <div className="border-t pt-3 text-[11px] leading-relaxed text-muted-foreground">
+                柱长 = 该状态占比;色块越长表示该状态越活跃
               </div>
             )}
           </CardContent>
         </Card>
       </div>
 
-      {/* 兑换码看板(M6)+ 最近 audit */}
-      <div className="grid grid-cols-1 gap-4 lg:grid-cols-7">
+      {/* 兑换码看板 + 最近 audit */}
+      <div className="grid grid-cols-1 gap-3 lg:grid-cols-7">
         <Card className="lg:col-span-3">
           <CardHeader>
             <CardTitle className="flex items-center gap-2">
-              <Ticket className="h-4 w-4" />
+              <Ticket className="h-4 w-4 text-muted-foreground" />
               兑换码看板
             </CardTitle>
             <CardDescription>近 7 日签发 / 使用 / 撤销 节奏</CardDescription>
           </CardHeader>
           <CardContent>
             {state.loadingModules.codes && !state.codesKpi ? (
-              <div className="flex h-32 items-center justify-center text-sm text-muted-foreground">
-                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                加载中…
-              </div>
+              <ModuleSkeleton />
             ) : !state.codesKpi ? (
-              <div className="text-sm text-muted-foreground">暂无数据</div>
+              <EmptyHint text="暂无兑换码数据" />
             ) : (
-              <div className="grid grid-cols-3 gap-3">
-                <MiniStat
-                  label="7 日新签发"
-                  value={state.codesKpi.issuedLast7Days}
-                  accent="text-indigo-500"
-                />
-                <MiniStat
-                  label="7 日已使用"
-                  value={state.codesKpi.consumedLast7Days}
-                  accent="text-emerald-500"
-                />
-                <MiniStat
-                  label="7 日已撤销"
-                  value={state.codesKpi.revokedLast7Days}
-                  accent="text-rose-500"
-                />
-                <div className="col-span-3 mt-2 text-xs text-muted-foreground">
-                  当前有效可兑换的码共{" "}
-                  <span className="font-mono font-medium text-foreground">
+              <div className="space-y-3">
+                <div className="grid grid-cols-3 gap-3">
+                  <MiniStat
+                    label="7 日新签发"
+                    value={state.codesKpi.issuedLast7Days}
+                    accent="text-indigo-600"
+                  />
+                  <MiniStat
+                    label="7 日已使用"
+                    value={state.codesKpi.consumedLast7Days}
+                    accent="text-emerald-600"
+                  />
+                  <MiniStat
+                    label="7 日已撤销"
+                    value={state.codesKpi.revokedLast7Days}
+                    accent="text-rose-600"
+                  />
+                </div>
+                <div className="flex items-center justify-between rounded-md border bg-muted/30 px-3 py-2 text-xs">
+                  <span className="text-muted-foreground">当前有效可兑换</span>
+                  <span className="tabular text-sm font-semibold text-foreground">
                     {state.codesKpi.activeCount.toLocaleString()}
-                  </span>{" "}
-                  个
+                  </span>
                 </div>
               </div>
             )}
@@ -533,9 +547,12 @@ export function DashboardPage(): React.ReactElement {
         </Card>
 
         <Card className="lg:col-span-4">
-          <CardHeader className="flex flex-row items-center justify-between">
+          <CardHeader className="flex flex-row items-center justify-between space-y-0">
             <div>
-              <CardTitle>最近审计</CardTitle>
+              <CardTitle className="flex items-center gap-2">
+                <Sparkles className="h-4 w-4 text-muted-foreground" />
+                最近审计
+              </CardTitle>
               <CardDescription>audit_logs DESC by createdAt(展示 8 条)</CardDescription>
             </div>
             <Button asChild variant="ghost" size="sm">
@@ -544,43 +561,40 @@ export function DashboardPage(): React.ReactElement {
           </CardHeader>
           <CardContent>
             {state.loadingModules.recentAudit && state.recent.length === 0 ? (
-              <div className="flex h-24 items-center justify-center text-sm text-muted-foreground">
-                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                加载中…
-              </div>
+              <ModuleSkeleton />
             ) : state.recent.length === 0 ? (
-              <div className="flex h-24 items-center justify-center text-sm text-muted-foreground">
-                暂无审计日志
-              </div>
+              <EmptyHint text="暂无审计日志" />
             ) : (
               <div className="overflow-x-auto">
                 <table className="w-full text-sm">
                   <thead>
-                    <tr className="border-b text-xs uppercase text-muted-foreground">
-                      <th className="py-2 text-left font-medium">时间</th>
-                      <th className="py-2 text-left font-medium">操作员</th>
-                      <th className="py-2 text-left font-medium">动作</th>
-                      <th className="py-2 text-left font-medium">目标用户</th>
+                    <tr className="border-b text-[11px] uppercase text-muted-foreground">
+                      <th className="py-2 pr-3 text-left font-medium">时间</th>
+                      <th className="py-2 pr-3 text-left font-medium">操作员</th>
+                      <th className="py-2 pr-3 text-left font-medium">动作</th>
+                      <th className="py-2 pr-3 text-left font-medium">目标</th>
                       <th className="py-2 text-left font-medium">详情</th>
                     </tr>
                   </thead>
                   <tbody>
                     {state.recent.map((row) => (
-                      <tr key={row.auditId} className="border-b last:border-0">
-                        <td className="py-2 font-mono text-xs text-muted-foreground">
+                      <tr key={row.auditId} className="border-b last:border-0 table-row-hover">
+                        <td className="py-2 pr-3 font-mono text-[11px] text-muted-foreground whitespace-nowrap">
                           {formatDate(row.createdAt)}
                         </td>
-                        <td className="py-2 font-medium">{row.actor}</td>
-                        <td className="py-2">
+                        <td className="py-2 pr-3 font-medium text-foreground whitespace-nowrap">
+                          {row.actor}
+                        </td>
+                        <td className="py-2 pr-3">
                           <Badge variant="secondary">{row.action}</Badge>
                         </td>
-                        <td className="py-2 text-xs">
+                        <td className="py-2 pr-3 font-mono text-[11px] text-ellipsis max-w-[120px]">
                           {row.targetUser ?? "—"}
                         </td>
-                        <td className="py-2 text-xs text-muted-foreground max-w-[300px] truncate">
+                        <td className="py-2 text-[11px] text-muted-foreground text-ellipsis max-w-[260px]">
                           {row.details
                             ? Object.entries(row.details)
-                                .map(([k, v]) => `${k}=${v}`)
+                                .map(([k, v]) => `${k}=${String(v).slice(0, 24)}`)
                                 .join(" · ")
                             : "—"}
                         </td>
@@ -593,6 +607,23 @@ export function DashboardPage(): React.ReactElement {
           </CardContent>
         </Card>
       </div>
+    </div>
+  );
+}
+
+function ModuleSkeleton(): React.ReactElement {
+  return (
+    <div className="flex h-[180px] items-center justify-center gap-2 text-sm text-muted-foreground">
+      <Loader2 className="h-4 w-4 animate-spin" />
+      加载中…
+    </div>
+  );
+}
+
+function EmptyHint({ text }: { text: string }): React.ReactElement {
+  return (
+    <div className="flex h-[180px] items-center justify-center rounded-md border border-dashed text-xs text-muted-foreground">
+      {text}
     </div>
   );
 }
@@ -612,12 +643,12 @@ function BillBar({
   return (
     <div className="space-y-1.5">
       <div className="flex items-center justify-between text-xs">
-        <span className="font-medium">{label}</span>
-        <span className="text-muted-foreground">
+        <span className="font-medium text-foreground">{label}</span>
+        <span className="tabular text-muted-foreground">
           {value.toLocaleString()} ({pct}%)
         </span>
       </div>
-      <div className="h-2 w-full overflow-hidden rounded-full bg-secondary">
+      <div className="h-2 w-full overflow-hidden rounded-full bg-muted">
         <div
           className={cn("h-full transition-all", colorClass)}
           style={{ width: `${pct}%` }}
@@ -637,9 +668,9 @@ function MiniStat({
   accent: string;
 }): React.ReactElement {
   return (
-    <div className="rounded-md border bg-muted/20 p-3">
-      <div className="text-xs text-muted-foreground">{label}</div>
-      <div className={cn("mt-1 text-2xl font-semibold tabular-nums", accent)}>
+    <div className="rounded-md border bg-muted/30 px-3 py-2.5">
+      <div className="text-[11px] text-muted-foreground">{label}</div>
+      <div className={cn("tabular mt-1 text-2xl font-semibold", accent)}>
         {value.toLocaleString()}
       </div>
     </div>

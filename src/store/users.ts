@@ -108,7 +108,12 @@ export interface UsersState {
   removeUser: (userId: string) => Promise<void>;
 
   // 批量操作
-  batch: (input: { action: "update_status" | "reset_password" | "delete"; userIds: string[]; status?: string }) => Promise<{ successCount: number; failedCount: number; items: Array<Record<string, unknown>> }>;
+  batch: (input: {
+    action: "update_status" | "reset_password" | "delete";
+    userIds: string[];
+    status?: string;
+    hardDelete?: boolean;
+  }) => Promise<{ successCount: number; failedCount: number; items: Array<Record<string, unknown>> }>;
 
   // 测试 / 调试
   reset: () => void;
@@ -327,7 +332,7 @@ export const useUsersStore = create<UsersState>((set, get) => ({
   },
 
   async removeUser(userId) {
-    await deleteUser(userId, userId);
+    await deleteUser(userId, userId, { hardDelete: true });
     set((s) => ({
       items: s.items.filter((it) => it.userId !== userId),
       detailCache: { ...s.detailCache, [userId]: null },

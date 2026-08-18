@@ -9,7 +9,6 @@ import { Layout } from "@/components/Layout";
 import { LoginPage } from "@/pages/Login";
 import { DashboardPage } from "@/pages/Dashboard";
 import { UsersPage } from "@/pages/Users";
-import { CodesPage } from "@/pages/Codes";
 import { BillsPage } from "@/pages/Bills";
 import { AuditPage } from "@/pages/Audit";
 import { AdminsPage } from "@/pages/Admins";
@@ -69,7 +68,6 @@ const router = createBrowserRouter([
         children: [
           { index: true, element: <DashboardPage /> },
           { path: "users", element: <UsersPage /> },
-          { path: "codes", element: <CodesPage /> },
           { path: "bills", element: <BillsPage /> },
           { path: "pricing", element: <PricingPage /> },
           { path: "audit", element: <AuditPage /> },

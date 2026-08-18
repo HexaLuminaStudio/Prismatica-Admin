@@ -52,6 +52,9 @@ export function codeStatusLabel(status: string): string {
 /* ---------------- 用户会员等级 ---------------- */
 
 export const USER_TIER_LABEL: Record<string, string> = {
+  free: "免费",
+  pro: "高级会员",
+  team: "团队会员",
   guest: "游客",
   trial: "体验用户",
   beta: "内测用户",
@@ -67,6 +70,9 @@ export function userTierLabel(tier: string): string {
 
 export const USER_STATUS_LABEL: Record<string, string> = {
   active: "正常",
+  paused: "已停用",
+  banned: "已封禁",
+  deleted: "已删除",
   suspended: "已停用",
   expired: "已过期",
 };

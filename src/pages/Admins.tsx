@@ -1,13 +1,11 @@
 /**
- * 管理员账号管理页(2026-08-06 M3)
+ * 管理员账号管理页(2026-08-18 UI 优化)
  *
- * 功能:
- *  - 列表(过滤 username/status/role,分页)
- *  - 行操作:锁定 / 解锁 / 重置密码(返回一次性明文)/ 软删除(二次确认)
- *  - 顶部「+ 新建账号」弹窗
- *  - 仅 owner 可见(Layout 已过滤 + 客户端路由守卫)
+ * - 列表(过滤 username/status/role,分页)
+ * - 行操作:锁定 / 解锁 / 重置密码(返回一次性明文)/ 软删除(二次确认)
+ * - 顶部「+ 新建账号」弹窗
+ * - 仅 owner 可见(Layout 已过滤 + 客户端路由守卫)
  */
-
 import * as React from "react";
 import {
   UserCog,
@@ -41,24 +39,23 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
-import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-} from "@/components/ui/card";
-import { formatDate, cn, copyToClipboard } from "@/lib/utils";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { cn, formatDate, copyToClipboard } from "@/lib/utils";
+import { EmptyState } from "@/components/EmptyState";
+import { roleLabel } from "@/lib/labels";
 
-const STATUS_BADGE: Record<AdminStatus, "default" | "destructive"> = {
+const STATUS_BADGE: Record<AdminStatus, "default" | "destructive" | "warning"> = {
   active: "default",
   locked: "destructive",
 };
 
-const ROLE_BADGE: Record<AdminRole, "default" | "secondary"> = {
-  owner: "default",
+const ROLE_BADGE: Record<AdminRole, "default" | "secondary" | "warning"> = {
+  owner: "warning",
   admin: "secondary",
 };
+
+const STATUS_OPTIONS: Array<"" | AdminStatus> = ["", "active", "locked"];
+const ROLE_OPTIONS: ("" | AdminRole)[] = ["", "admin", "owner"];
 
 export function AdminsPage(): React.ReactElement {
   const me = useSessionStore((s) => s.me);
@@ -76,10 +73,9 @@ export function AdminsPage(): React.ReactElement {
   const [deleteTarget, setDeleteTarget] =
     React.useState<AdminAccountItem | null>(null);
 
-  // 客户端二次防御:非 owner 直接退回 /
+  // 客户端二次防御:非 owner 直接退回
   React.useEffect(() => {
     if (me && me.role !== "owner") {
-      // 静默登出,避免暴露"已绕过 UI 但仍可访问"的尴尬
       void logout();
     }
   }, [me, logout]);
@@ -101,7 +97,6 @@ export function AdminsPage(): React.ReactElement {
       } catch (e) {
         const msg = e instanceof Error ? e.message : "加载失败";
         setError(msg);
-        // 403 → 普通 admin 误闯:清 session
         if (e instanceof ApiClientError && e.httpStatus === 403) {
           void logout();
         }
@@ -153,163 +148,169 @@ export function AdminsPage(): React.ReactElement {
 
   return (
     <div className="space-y-4">
+      {/* 页面标题 */}
+      <div className="page-header">
+        <div>
+          <h1 className="page-title flex items-center gap-2">
+            <UserCog className="h-5 w-5 text-muted-foreground" />
+            账号管理
+          </h1>
+          <p className="page-subtitle">仅 owner 可见 · 管理 admin_users(username / role / status)</p>
+        </div>
+        <div className="flex items-center gap-2">
+          <Button size="sm" onClick={() => setCreateOpen(true)}>
+            <Plus />
+            新建账号
+          </Button>
+          <Button variant="ghost" size="sm" onClick={() => void load({ reset: true })} disabled={loading} aria-label="刷新列表">
+            <RefreshCcw className={cn(loading && "animate-spin")} />
+          </Button>
+        </div>
+      </div>
+
       <Card>
-        <CardHeader className="flex flex-row items-center justify-between space-y-0">
-          <div>
-            <CardTitle className="flex items-center gap-2">
-              <UserCog className="h-4 w-4" />
-              账号管理
-            </CardTitle>
-            <CardDescription>
-              仅 owner 可见 · 管理 admin_users(username / role / status)
-            </CardDescription>
-          </div>
-          <div className="flex items-center gap-2">
-            <Button size="sm" onClick={() => setCreateOpen(true)}>
-              <Plus className="mr-1 h-4 w-4" />
-              新建账号
-            </Button>
-            <Button
-              size="sm"
-              variant="ghost"
-              onClick={() => void load({ reset: true })}
-              disabled={loading}
-            >
-              <RefreshCcw
-                className={cn("h-4 w-4", loading && "animate-spin")}
-              />
-            </Button>
-          </div>
+        <CardHeader className="pb-3">
+          <CardTitle>筛选</CardTitle>
+          <CardDescription>按 username 模糊搜索 + status / role 精确筛选</CardDescription>
         </CardHeader>
-        <CardContent>
-          <div className="mb-3 flex flex-wrap items-center gap-2 text-xs">
-            <div className="relative flex w-72 items-center">
-              <Search className="absolute left-2 top-2.5 h-4 w-4 text-muted-foreground" />
-              <Input
-                value={q}
-                onChange={(e) => setQ(e.target.value)}
-                placeholder="搜索 username / userId"
-                className="h-8 pl-8"
-                onKeyDown={(e) => {
-                  if (e.key === "Enter") void load({ reset: true });
-                }}
-              />
+        <CardContent className="space-y-3">
+          <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
+            <div className="space-y-1.5">
+              <Label className="text-xs">搜索</Label>
+              <div className="relative">
+                <Search className="absolute left-3 top-2.5 h-4 w-4 text-muted-foreground" />
+                <Input
+                  value={q}
+                  onChange={(e) => setQ(e.target.value)}
+                  placeholder="username / userId"
+                  className="pl-9"
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") void load({ reset: true });
+                  }}
+                />
+              </div>
             </div>
-            <span className="ml-2 text-muted-foreground">status:</span>
-            {(["", "active", "locked"] as const).map((s) => (
-              <Button
-                key={s || "all-s"}
-                size="sm"
-                variant={filterStatus === s ? "default" : "outline"}
-                onClick={() => setFilterStatus(s as typeof filterStatus)}
-                className="h-7"
-              >
-                {s || "全部"}
-              </Button>
-            ))}
-            <span className="ml-2 text-muted-foreground">role:</span>
-            {(["", "owner", "admin"] as const).map((r) => (
-              <Button
-                key={r || "all-r"}
-                size="sm"
-                variant={filterRole === r ? "default" : "outline"}
-                onClick={() => setFilterRole(r as typeof filterRole)}
-                className="h-7"
-              >
-                {r || "全部"}
-              </Button>
-            ))}
+            <div className="space-y-1.5">
+              <Label className="text-xs">status</Label>
+              <div className="flex flex-wrap gap-1.5">
+                {STATUS_OPTIONS.map((s) => (
+                  <Button
+                    key={s || "all-s"}
+                    size="sm"
+                    variant={filterStatus === s ? "default" : "outline"}
+                    onClick={() => setFilterStatus(s as typeof filterStatus)}
+                    className="h-7"
+                  >
+                    {s || "全部"}
+                  </Button>
+                ))}
+              </div>
+            </div>
+            <div className="space-y-1.5">
+              <Label className="text-xs">role</Label>
+              <div className="flex flex-wrap gap-1.5">
+                {ROLE_OPTIONS.map((r) => (
+                  <Button
+                    key={r || "all-r"}
+                    size="sm"
+                    variant={filterRole === r ? "default" : "outline"}
+                    onClick={() => setFilterRole(r as typeof filterRole)}
+                    className="h-7"
+                  >
+                    {r || "全部"}
+                  </Button>
+                ))}
+              </div>
+            </div>
           </div>
+          <div className="flex justify-end border-t pt-3">
+            <Button size="sm" onClick={() => void load({ reset: true })} disabled={loading}>
+              {loading ? <Loader2 className="animate-spin" /> : null}
+              应用筛选
+            </Button>
+          </div>
+        </CardContent>
+      </Card>
 
-          {error && (
-            <div className="mb-3 flex items-start gap-2 rounded-md border border-destructive/40 bg-destructive/5 p-3 text-sm text-destructive">
-              <AlertTriangle className="mt-0.5 h-4 w-4" />
-              <div>{error}</div>
-            </div>
-          )}
+      {error && (
+        <div className="flex items-start gap-3 rounded-lg border border-amber-500/40 bg-amber-500/10 p-3 text-sm text-amber-700 dark:text-amber-300">
+          <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
+          <div>{error}</div>
+        </div>
+      )}
 
+      <Card>
+        <CardContent className="p-0">
           <div className="overflow-x-auto">
             <table className="w-full text-sm">
               <thead>
-                <tr className="border-b text-xs uppercase text-muted-foreground">
-                  <th className="py-2 text-left font-medium">username</th>
-                  <th className="py-2 text-left font-medium">role</th>
-                  <th className="py-2 text-left font-medium">status</th>
-                  <th className="py-2 text-left font-medium">lastLogin</th>
-                  <th className="py-2 text-right font-medium">失败次数</th>
-                  <th className="py-2 text-left font-medium">创建时间</th>
-                  <th className="py-2 text-right font-medium">操作</th>
+                <tr className="border-b bg-muted/30 text-[11px] uppercase tracking-wide text-muted-foreground">
+                  <th className="py-2.5 pl-4 text-left font-medium">username</th>
+                  <th className="py-2.5 text-left font-medium">role</th>
+                  <th className="py-2.5 text-left font-medium">status</th>
+                  <th className="py-2.5 text-left font-medium">上次登录</th>
+                  <th className="py-2.5 text-right font-medium">失败次数</th>
+                  <th className="py-2.5 text-left font-medium">创建时间</th>
+                  <th className="py-2.5 pr-4 text-right font-medium">操作</th>
                 </tr>
               </thead>
               <tbody>
                 {items.length === 0 && !loading && (
                   <tr>
-                    <td
-                      colSpan={7}
-                      className="py-12 text-center text-muted-foreground"
-                    >
-                      暂无账号
+                    <td colSpan={7} className="p-0">
+                      <EmptyState
+                        icon={UserCog}
+                        title="暂无账号"
+                        description="通过「新建账号」可创建新的管理员账号"
+                      />
                     </td>
                   </tr>
                 )}
                 {items.map((a) => (
-                  <tr key={a.userId} className="border-b">
-                    <td className="py-2 font-medium">{a.username}</td>
+                  <tr key={a.userId} className="border-b last:border-0 transition-colors hover:bg-muted/40">
+                    <td className="py-2 pl-4 font-medium text-foreground">
+                      <div>{a.username}</div>
+                      <div className="font-mono text-[11px] text-muted-foreground">
+                        {a.userId.slice(0, 12)}…
+                      </div>
+                    </td>
                     <td className="py-2">
-                      <Badge variant={ROLE_BADGE[a.role]}>{a.role}</Badge>
+                      <Badge variant={ROLE_BADGE[a.role]}>{roleLabel(a.role)}</Badge>
                     </td>
                     <td className="py-2">
                       <Badge variant={STATUS_BADGE[a.status]}>
-                        {a.status}
+                        {a.status === "active" ? "正常" : "已锁定"}
                       </Badge>
                     </td>
-                    <td className="py-2 text-xs">
+                    <td className="py-2 text-xs whitespace-nowrap text-muted-foreground">
                       {formatDate(a.lastLoginAt)}
                     </td>
-                    <td className="py-2 text-right tabular-nums">
+                    <td className="py-2 text-right tabular text-xs text-muted-foreground">
                       {a.failedAttempts}
                     </td>
-                    <td className="py-2 text-xs">{formatDate(a.createdAt)}</td>
-                    <td className="py-2 text-right">
+                    <td className="py-2 text-xs whitespace-nowrap text-muted-foreground">
+                      {formatDate(a.createdAt)}
+                    </td>
+                    <td className="py-2 pr-4 text-right">
                       <div className="flex justify-end gap-1">
-                        <Button
-                          size="sm"
-                          variant="ghost"
-                          disabled={loading}
-                          onClick={() => void onToggleStatus(a)}
-                        >
-                          {a.status === "active" ? (
-                            <>
-                              <Lock className="mr-1 h-3 w-3" />
-                              锁定
-                            </>
-                          ) : (
-                            <>
-                              <Unlock className="mr-1 h-3 w-3" />
-                              解锁
-                            </>
-                          )}
+                        <Button size="sm" variant="ghost" disabled={loading} onClick={() => void onToggleStatus(a)}>
+                          {a.status === "active" ? <Lock /> : <Unlock />}
+                          {a.status === "active" ? "锁定" : "解锁"}
                         </Button>
-                        <Button
-                          size="sm"
-                          variant="ghost"
-                          disabled={loading}
-                          onClick={() => void onReset(a)}
-                        >
-                          <KeyRound className="mr-1 h-3 w-3" />
+                        <Button size="sm" variant="ghost" disabled={loading} onClick={() => void onReset(a)}>
+                          <KeyRound />
                           重置密码
                         </Button>
                         <Button
-                          size="sm"
+                          size="icon-sm"
                           variant="ghost"
                           disabled={loading || me?.userId === a.userId}
                           onClick={() => setDeleteTarget(a)}
                           className="text-muted-foreground hover:text-destructive"
-                          title={
-                            me?.userId === a.userId ? "不能删除自己" : "软删除"
-                          }
+                          title={me?.userId === a.userId ? "不能删除自己" : "软删除"}
+                          aria-label="软删除"
                         >
-                          <Trash2 className="h-3 w-3" />
+                          <Trash2 />
                         </Button>
                       </div>
                     </td>
@@ -319,16 +320,9 @@ export function AdminsPage(): React.ReactElement {
             </table>
           </div>
           {nextCursor && (
-            <div className="mt-3 flex justify-center">
-              <Button
-                variant="outline"
-                size="sm"
-                disabled={loading}
-                onClick={() => void load({ cursor: nextCursor })}
-              >
-                {loading ? (
-                  <Loader2 className="mr-1 h-4 w-4 animate-spin" />
-                ) : null}
+            <div className="flex justify-center border-t p-3">
+              <Button variant="outline" size="sm" disabled={loading} onClick={() => void load({ cursor: nextCursor })}>
+                {loading ? <Loader2 className="animate-spin" /> : null}
                 加载更多
               </Button>
             </div>
@@ -348,10 +342,7 @@ export function AdminsPage(): React.ReactElement {
       )}
 
       {resetResult && (
-        <ResetResultDialog
-          data={resetResult}
-          onClose={() => setResetResult(null)}
-        />
+        <ResetResultDialog data={resetResult} onClose={() => setResetResult(null)} />
       )}
 
       {deleteTarget && (
@@ -372,7 +363,6 @@ export function AdminsPage(): React.ReactElement {
 // ---------------------------------------------------------------------------
 // 弹窗:新建账号
 // ---------------------------------------------------------------------------
-
 
 function CreateDialog({
   onClose,
@@ -412,29 +402,15 @@ function CreateDialog({
   return (
     <Modal title="新建管理员账号" onClose={onClose}>
       <form onSubmit={onSubmit} className="space-y-3">
-        <div className="space-y-1">
+        <div className="space-y-1.5">
           <Label htmlFor="new-username">username</Label>
-          <Input
-            id="new-username"
-            value={username}
-            onChange={(e) => setUsername(e.target.value)}
-            placeholder="3~64 字符"
-            disabled={busy}
-            autoFocus
-          />
+          <Input id="new-username" value={username} onChange={(e) => setUsername(e.target.value)} placeholder="3~64 字符" disabled={busy} autoFocus />
         </div>
-        <div className="space-y-1">
+        <div className="space-y-1.5">
           <Label htmlFor="new-password">初始 password</Label>
-          <Input
-            id="new-password"
-            type="password"
-            value={password}
-            onChange={(e) => setPassword(e.target.value)}
-            placeholder="≥ 8 字符"
-            disabled={busy}
-          />
+          <Input id="new-password" type="password" value={password} onChange={(e) => setPassword(e.target.value)} placeholder="≥ 8 字符" disabled={busy} />
         </div>
-        <div className="space-y-1">
+        <div className="space-y-1.5">
           <Label>role</Label>
           <div className="flex gap-2">
             {(["admin", "owner"] as AdminRole[]).map((r) => (
@@ -446,22 +422,18 @@ function CreateDialog({
                 onClick={() => setRole(r)}
                 disabled={busy}
               >
-                {role === r ? <Check className="mr-1 h-3 w-3" /> : null}
-                {r}
+                {role === r ? <Check /> : null}
+                {roleLabel(r)}
               </Button>
             ))}
           </div>
-          <p className="text-xs text-muted-foreground">
-            owner 可管理本页所有账号;admin 仅可访问自身相关接口
-          </p>
+          <p className="text-xs text-muted-foreground">owner 可管理本页所有账号;admin 仅可访问自身相关接口</p>
         </div>
         {err && <div className="text-sm text-destructive">{err}</div>}
         <div className="flex justify-end gap-2 pt-2">
-          <Button type="button" variant="ghost" onClick={onClose} disabled={busy}>
-            取消
-          </Button>
+          <Button type="button" variant="ghost" onClick={onClose} disabled={busy}>取消</Button>
           <Button type="submit" disabled={busy}>
-            {busy ? <Loader2 className="mr-1 h-4 w-4 animate-spin" /> : null}
+            {busy ? <Loader2 className="animate-spin" /> : null}
             创建
           </Button>
         </div>
@@ -470,11 +442,9 @@ function CreateDialog({
   );
 }
 
-
 // ---------------------------------------------------------------------------
 // 弹窗:重置密码结果(一次性明文)
 // ---------------------------------------------------------------------------
-
 
 function ResetResultDialog({
   data,
@@ -504,18 +474,9 @@ function ResetResultDialog({
           userId: <span className="font-mono">{data.userId}</span>
         </div>
         <div className="flex items-center gap-2 rounded-md border bg-muted/30 p-2">
-          <span className="flex-1 font-mono text-sm">{data.newPassword}</span>
-          <Button
-            type="button"
-            size="sm"
-            variant="ghost"
-            onClick={() => void copy()}
-          >
-            {copied ? (
-              <Check className="h-4 w-4 text-emerald-500" />
-            ) : (
-              <Copy className="h-4 w-4" />
-            )}
+          <span className="flex-1 font-mono text-sm tabular text-foreground">{data.newPassword}</span>
+          <Button type="button" size="icon-sm" variant="ghost" onClick={() => void copy()} aria-label="复制">
+            {copied ? <Check className="text-emerald-500" /> : <Copy />}
           </Button>
         </div>
         <div className="text-xs text-muted-foreground">
@@ -529,11 +490,9 @@ function ResetResultDialog({
   );
 }
 
-
 // ---------------------------------------------------------------------------
 // 弹窗:软删除(二次确认)
 // ---------------------------------------------------------------------------
-
 
 function DeleteDialog({
   target,
@@ -576,30 +535,17 @@ function DeleteDialog({
         username 一旦软删将<strong>永久占用</strong>,无法被同名账号再次使用。
       </div>
       <form onSubmit={onSubmit} className="space-y-3">
-        <div className="space-y-1">
+        <div className="space-y-1.5">
           <Label htmlFor="confirm-username">
-            请输入目标 username{" "}
-            <span className="font-mono">{target.username}</span> 以继续
+            请输入目标 username <span className="font-mono">{target.username}</span> 以继续
           </Label>
-          <Input
-            id="confirm-username"
-            value={confirm}
-            onChange={(e) => setConfirm(e.target.value)}
-            disabled={busy}
-            autoFocus
-          />
+          <Input id="confirm-username" value={confirm} onChange={(e) => setConfirm(e.target.value)} disabled={busy} autoFocus />
         </div>
         {err && <div className="text-sm text-destructive">{err}</div>}
         <div className="flex justify-end gap-2 pt-2">
-          <Button type="button" variant="ghost" onClick={onClose} disabled={busy}>
-            取消
-          </Button>
-          <Button
-            type="submit"
-            variant="destructive"
-            disabled={busy || !matched}
-          >
-            {busy ? <Loader2 className="mr-1 h-4 w-4 animate-spin" /> : null}
+          <Button type="button" variant="ghost" onClick={onClose} disabled={busy}>取消</Button>
+          <Button type="submit" variant="destructive" disabled={busy || !matched}>
+            {busy ? <Loader2 className="animate-spin" /> : null}
             确认软删除
           </Button>
         </div>
@@ -608,11 +554,9 @@ function DeleteDialog({
   );
 }
 
-
 // ---------------------------------------------------------------------------
 // 通用 Modal(与 Codes / Users 保持一致风格)
 // ---------------------------------------------------------------------------
-
 
 function Modal({
   title,
@@ -625,11 +569,11 @@ function Modal({
 }): React.ReactElement {
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
-      <div className="w-full max-w-md rounded-lg border bg-card p-5 shadow-xl">
+      <div className="w-full max-w-md rounded-xl border bg-card p-5 shadow-xl">
         <div className="mb-3 flex items-center justify-between">
           <div className="text-sm font-semibold">{title}</div>
-          <Button type="button" size="icon" variant="ghost" onClick={onClose}>
-            <X className="h-4 w-4" />
+          <Button type="button" size="icon-sm" variant="ghost" onClick={onClose} aria-label="关闭">
+            <X />
           </Button>
         </div>
         {children}

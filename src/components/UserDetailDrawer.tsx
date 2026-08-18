@@ -4,8 +4,8 @@
  * 抽屉式用户详情:
  *  - 5 个 tab:基本信息 / 订阅 / 余额 / 设备 / 账本
  *  - 抽屉内操作:
- *      - 改 tier / 改 status / 改邮箱 / 改昵称
- *      - 强制下线 / 手动赠送 / 重置密码(返回一次性明文)/ 软删除
+ *      - 改会员等级 / 改状态 / 改邮箱 / 改昵称
+ *      - 强制下线 / 手动赠送 / 重置密码(返回一次性明文)/ 删除
  *  - 写操作走 toast 反馈 + 后端 audit_log
  *
  * 数据由 useUsersStore 提供;不直接调 API。
@@ -53,8 +53,22 @@ import { userTierLabel, userStatusLabel } from "@/lib/labels";
 import { classifyError } from "@/lib/errorMessages";
 import { toast } from "@/components/Toast";
 
-const TIERS = ["free", "pro", "team", "guest", "trial", "beta", "beta_pro", "paid"] as const;
-const STATUSES = ["active", "paused", "banned", "deleted"] as const;
+const TIER_OPTIONS = [
+  { value: "free", label: "免费" },
+  { value: "pro", label: "高级会员" },
+  { value: "team", label: "团队会员" },
+  { value: "guest", label: "游客" },
+  { value: "trial", label: "体验用户" },
+  { value: "beta", label: "内测用户" },
+  { value: "beta_pro", label: "内测专业版" },
+  { value: "paid", label: "付费用户" },
+] as const;
+const STATUS_OPTIONS = [
+  { value: "active", label: "正常" },
+  { value: "paused", label: "已停用" },
+  { value: "banned", label: "已封禁" },
+  { value: "deleted", label: "已删除" },
+] as const;
 const SUBSCRIPTION_PLANS: Array<{
   code: SubscriptionPlanCode;
   name: string;
@@ -73,8 +87,11 @@ const SUBSCRIPTION_STATUS_NAMES: Record<string, string> = {
   canceled: "已取消",
   past_due: "待续费",
 };
-type Tier = (typeof TIERS)[number];
-type Status = (typeof STATUSES)[number];
+type Tier = (typeof TIER_OPTIONS)[number]["value"];
+type Status = (typeof STATUS_OPTIONS)[number]["value"];
+
+const isStatus = (value: string): value is Status =>
+  STATUS_OPTIONS.some((option) => option.value === value);
 
 const TAB_LABELS: Record<DetailTab, string> = {
   info: "基本信息",
@@ -252,9 +269,7 @@ function InfoTab({
 
   const [tier, setTier] = React.useState<Tier>((detail.tier as Tier) ?? "free");
   const [status, setStatus] = React.useState<Status | "">(
-    (STATUSES as readonly string[]).includes(detail.status)
-      ? (detail.status as Status)
-      : ""
+    isStatus(detail.status) ? detail.status : ""
   );
   const [email, setEmail] = React.useState(detail.email ?? "");
   const [displayName, setDisplayName] = React.useState(detail.displayName ?? "");
@@ -267,9 +282,7 @@ function InfoTab({
   React.useEffect(() => {
     setTier((detail.tier as Tier) ?? "free");
     setStatus(
-      (STATUSES as readonly string[]).includes(detail.status)
-        ? (detail.status as Status)
-        : ""
+      isStatus(detail.status) ? detail.status : isTier(detail.status) ? "" : ""
     );
     setEmail(detail.email ?? "");
     setDisplayName(detail.displayName ?? "");
@@ -348,14 +361,14 @@ function InfoTab({
 
   const onDelete = async () => {
     const confirmText = window.prompt(
-      `确定软删除该用户(${userId.slice(0, 8)}…)?\n将撤销该用户所有会话并禁用设备。\n请输入 userId(${userId})以确认:`,
+      `确定删除该用户(${userId.slice(0, 8)}…)?\n将撤销该用户所有会话并禁用设备。\n请输入 userId(${userId})以确认:`,
       ""
     );
     if (confirmText !== userId) return;
     setBusy("delete");
     try {
       await removeUser(userId);
-      toast({ kind: "success", title: "用户已软删除" });
+      toast({ kind: "success", title: "用户已删除" });
       onClose();
     } catch (e) {
       const msg = classifyError(e);
@@ -389,8 +402,8 @@ function InfoTab({
       <div className="grid grid-cols-2 gap-x-6 gap-y-2 rounded-md border bg-muted/20 p-4 text-xs md:grid-cols-3">
         <SummaryItem label="邮箱" value={detail.email ?? "—"} />
         <SummaryItem label="userId" value={userId} mono />
-        <SummaryItem label="tier" value={userTierLabel(detail.tier)} />
-        <SummaryItem label="status" value={userStatusLabel(detail.status)} />
+        <SummaryItem label="会员等级" value={userTierLabel(detail.tier)} />
+        <SummaryItem label="状态" value={userStatusLabel(detail.status)} />
         <SummaryItem
           label="余额"
           value={detail.balance.toLocaleString()}
@@ -452,15 +465,15 @@ function InfoTab({
         <div className="space-y-2">
           <div className="text-xs text-muted-foreground">会员等级</div>
           <div className="flex flex-wrap gap-2">
-            {TIERS.map((t) => (
+            {TIER_OPTIONS.map((option) => (
               <Button
-                key={t}
+                key={option.value}
                 size="sm"
-                variant={tier === t ? "default" : "outline"}
+                variant={tier === option.value ? "default" : "outline"}
                 disabled={busy !== ""}
-                onClick={() => setTier(t)}
+                onClick={() => setTier(option.value)}
               >
-                {t}
+                {option.label}
               </Button>
             ))}
           </div>
@@ -476,15 +489,15 @@ function InfoTab({
             >
               保持不变
             </Button>
-            {STATUSES.map((s) => (
+            {STATUS_OPTIONS.map((option) => (
               <Button
-                key={s}
+                key={option.value}
                 size="sm"
-                variant={status === s ? "default" : "outline"}
+                variant={status === option.value ? "default" : "outline"}
                 disabled={busy !== ""}
-                onClick={() => setStatus(s)}
+                onClick={() => setStatus(option.value)}
               >
-                {s}
+                {option.label}
               </Button>
             ))}
           </div>
@@ -556,7 +569,7 @@ function InfoTab({
             ) : (
               <Trash2 className="mr-1 h-4 w-4" />
             )}
-            软删除
+            删除
           </Button>
         </div>
 
@@ -1182,4 +1195,5 @@ function GrantDialog({
       </div>
     </div>
   );
-}
+const isTier = (value: string): value is Tier =>
+  TIER_OPTIONS.some((option) => option.value === value);
